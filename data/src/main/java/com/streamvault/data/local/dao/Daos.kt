@@ -12,6 +12,9 @@ interface ProviderDao {
     @Query("SELECT * FROM providers WHERE is_active = 1 LIMIT 1")
     fun getActive(): Flow<ProviderEntity?>
 
+    @Query("SELECT * FROM providers WHERE server_url = :serverUrl AND username = :username")
+    suspend fun getByUrlAndUser(serverUrl: String, username: String): ProviderEntity?
+
     @Query("SELECT * FROM providers WHERE id = :id")
     suspend fun getById(id: Long): ProviderEntity?
 
@@ -62,6 +65,12 @@ interface ChannelDao {
 
     @Query("SELECT * FROM channels WHERE id IN (:ids)")
     fun getByIds(ids: List<Long>): Flow<List<ChannelEntity>>
+
+    @Query("SELECT category_id, COUNT(*) as item_count FROM channels WHERE provider_id = :providerId GROUP BY category_id")
+    fun getCategoryCounts(providerId: Long): Flow<List<CategoryCount>>
+
+    @Query("SELECT COUNT(*) FROM channels WHERE provider_id = :providerId")
+    fun getCount(providerId: Long): Flow<Int>
 }
 
 @Dao
@@ -98,6 +107,12 @@ interface MovieDao {
         deleteByProvider(providerId)
         insertAll(movies)
     }
+
+    @Query("SELECT category_id, COUNT(*) as item_count FROM movies WHERE provider_id = :providerId GROUP BY category_id")
+    fun getCategoryCounts(providerId: Long): Flow<List<CategoryCount>>
+
+    @Query("SELECT COUNT(*) FROM movies WHERE provider_id = :providerId")
+    fun getCount(providerId: Long): Flow<Int>
 }
 
 @Dao
@@ -125,7 +140,14 @@ interface SeriesDao {
         deleteByProvider(providerId)
         insertAll(series)
     }
+
+    @Query("SELECT category_id, COUNT(*) as item_count FROM series WHERE provider_id = :providerId GROUP BY category_id")
+    fun getCategoryCounts(providerId: Long): Flow<List<CategoryCount>>
+
+    @Query("SELECT COUNT(*) FROM series WHERE provider_id = :providerId")
+    fun getCount(providerId: Long): Flow<Int>
 }
+
 
 @Dao
 interface EpisodeDao {
@@ -186,20 +208,29 @@ interface ProgramDao {
 
 @Dao
 interface FavoriteDao {
-    @Query("SELECT * FROM favorites ORDER BY position ASC")
-    fun getAll(): Flow<List<FavoriteEntity>>
+    @Query("SELECT * FROM favorites WHERE group_id IS NULL ORDER BY position ASC")
+    fun getAllGlobal(): Flow<List<FavoriteEntity>>
 
-    @Query("SELECT * FROM favorites WHERE content_type = :contentType ORDER BY position ASC")
-    fun getByType(contentType: String): Flow<List<FavoriteEntity>>
+    @Query("SELECT * FROM favorites WHERE content_type = :contentType AND group_id IS NULL ORDER BY position ASC")
+    fun getGlobalByType(contentType: String): Flow<List<FavoriteEntity>>
 
     @Query("SELECT * FROM favorites WHERE group_id = :groupId ORDER BY position ASC")
     fun getByGroup(groupId: Long): Flow<List<FavoriteEntity>>
 
-    @Query("SELECT * FROM favorites WHERE content_id = :contentId AND content_type = :contentType LIMIT 1")
-    suspend fun get(contentId: Long, contentType: String): FavoriteEntity?
+    @Query("SELECT * FROM favorites WHERE content_id = :contentId AND content_type = :contentType AND (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId) LIMIT 1")
+    suspend fun get(contentId: Long, contentType: String, groupId: Long?): FavoriteEntity?
 
-    @Query("SELECT MAX(position) FROM favorites")
-    suspend fun getMaxPosition(): Int?
+    @Query("SELECT COUNT(*) FROM favorites WHERE group_id IS NULL AND content_type = 'LIVE'")
+    fun getGlobalLiveCount(): Flow<Int>
+
+    @Query("SELECT group_id as category_id, COUNT(*) as item_count FROM favorites WHERE group_id IS NOT NULL AND content_type = 'LIVE' GROUP BY group_id")
+    fun getGroupLiveCounts(): Flow<List<CategoryCount>>
+
+    @Query("SELECT group_id FROM favorites WHERE content_id = :contentId AND content_type = :contentType AND group_id IS NOT NULL")
+    suspend fun getGroupMemberships(contentId: Long, contentType: String): List<Long>
+
+    @Query("SELECT MAX(position) FROM favorites WHERE (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId)")
+    suspend fun getMaxPosition(groupId: Long?): Int?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(favorite: FavoriteEntity)
@@ -207,8 +238,8 @@ interface FavoriteDao {
     @Update
     suspend fun updateAll(favorites: List<FavoriteEntity>)
 
-    @Query("DELETE FROM favorites WHERE content_id = :contentId AND content_type = :contentType")
-    suspend fun delete(contentId: Long, contentType: String)
+    @Query("DELETE FROM favorites WHERE content_id = :contentId AND content_type = :contentType AND (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId)")
+    suspend fun delete(contentId: Long, contentType: String, groupId: Long?)
 
     @Query("UPDATE favorites SET group_id = :groupId WHERE id = :favoriteId")
     suspend fun updateGroup(favoriteId: Long, groupId: Long?)

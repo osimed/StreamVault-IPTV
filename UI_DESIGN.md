@@ -270,3 +270,44 @@ XXL: 48dp    (major section breaks)
 ## 🎯 Design Summary
 
 The visual identity is **dark, clean, and fast**. Every design decision serves the goal of instant-feeling D-pad navigation. The palette is muted with a single accent color. Cards are simple rectangles with posters. Focus is communicated through a consistent scale + border pattern. The entire UI could run on a $30 Android TV stick without frame drops.
+
+---
+
+## 🧠 Interaction Patterns & Lessons Learned
+
+### 1. The "TV Focus" Rule
+Standard Compose Material 3 components often fail on Android TV because they assume touch interaction or handle focus internally in ways that conflict with D-Pad navigation.
+- **Rule**: If a component has complex internal state (like `TextField`), wrap it in a `Box` that handles the D-Pad focus and click events.
+- **Why**: `OutlinedTextField` often captures focus and refuses to surrender it, or fails to show the keyboard when focused via D-Pad.
+
+### 2. Search Bar Pattern
+**Do Not Use**: `OutlinedTextField` directly exposed to D-Pad.
+**Use This**: 
+```kotlin
+Box(
+    modifier = Modifier
+        .focusable()
+        .clickable { 
+            // 1. Request focus for inner TextField
+            // 2. Show keyboard manually
+         }
+) {
+    BasicTextField(
+        readOnly = true // Only editable when virtual keyboard is active
+    )
+}
+```
+
+### 3. Long Press & Ghost Clicks
+**The Problem**: On many TV remotes, releasing the Select button after a Long Press triggers a subsequent `onClick` event ("Ghost Click").
+**The Fix**: Implement a **Top-Level Click Lock**.
+- When `onLongClick` fires: Set `lock = true`.
+- When `onClick` fires: Check `lock`. If true, consume event and set `lock = false`.
+- Safety: Auto-reset `lock` after 1s to prevent stuck states.
+- **Do Not Use**: Debounce by timestamp alone (unreliable if user holds button long).
+
+### 4. Zapping Architecture
+Channel zapping (P+/P-) in the player requires global context.
+- **Do Not**: Pass just the stream URL to the player.
+- **Do**: Pass the `channelId` and the `playlistContext` (Category ID). The player logic must query the DB for "Next Channel in Category X after Channel Y".
+

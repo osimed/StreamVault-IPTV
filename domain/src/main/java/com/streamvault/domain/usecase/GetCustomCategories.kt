@@ -11,13 +11,19 @@ class GetCustomCategories @Inject constructor(
     private val favoriteRepository: FavoriteRepository
 ) {
     operator fun invoke(): Flow<List<Category>> {
-        return favoriteRepository.getGroups().map { groups ->
+        return kotlinx.coroutines.flow.combine(
+            favoriteRepository.getGroups(),
+            favoriteRepository.getGlobalLiveFavoriteCount(),
+            favoriteRepository.getGroupLiveFavoriteCounts()
+        ) { groups, globalCount, groupCounts ->
+            
             val categories = groups.map { group ->
                 Category(
-                    id = -group.id, // Use negative ID for virtual groups to avoid collision with provider IDs
+                    id = -group.id, // Use negative ID for virtual groups
                     name = group.name,
                     type = ContentType.LIVE,
-                    isVirtual = true
+                    isVirtual = true,
+                    count = groupCounts[group.id] ?: 0
                 )
             }.toMutableList()
 
@@ -26,7 +32,8 @@ class GetCustomCategories @Inject constructor(
                 id = -999L, // Special ID for "All Favorites"
                 name = "★ Favorites",
                 type = ContentType.LIVE,
-                isVirtual = true
+                isVirtual = true,
+                count = globalCount
             ))
 
             categories

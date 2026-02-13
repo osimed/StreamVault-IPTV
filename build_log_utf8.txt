@@ -1,4 +1,4 @@
-> Task :app:preBuild UP-TO-DATE
+﻿> Task :app:preBuild UP-TO-DATE
 > Task :app:preDebugBuild UP-TO-DATE
 > Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
 > Task :domain:checkKotlinGradlePluginConfigurationErrors SKIPPED

@@ -1,12 +1,14 @@
 package com.streamvault.app.ui.components.dialogs
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,11 +22,17 @@ import androidx.compose.ui.window.Dialog
 import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.Category
 
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.shape.CircleShape
+import kotlinx.coroutines.delay
+
 @Composable
 fun AddToGroupDialog(
     channel: Channel,
     groups: List<Category>, // Only custom groups
     isFavorite: Boolean,
+    memberOfGroups: List<Long>,
     onDismiss: () -> Unit,
     onToggleFavorite: () -> Unit,
     onAddToGroup: (Category) -> Unit,
@@ -35,19 +43,47 @@ fun AddToGroupDialog(
 ) {
     var showCreateGroup by remember { mutableStateOf(false) }
     var newGroupName by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+    
+    // Fix for ghost clicks: Debounce interaction for 500ms to ignore long-press release
+    var canInteract by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onDismiss) {
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        delay(500)
+        canInteract = true
+    }
+    
+    val safeDismiss = {
+        if (canInteract) onDismiss()
+    }
+
+    Dialog(onDismissRequest = safeDismiss) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.width(400.dp).padding(16.dp)
+            modifier = Modifier
+                .width(400.dp)
+                .padding(16.dp)
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
-                Text(
-                    text = "Manage: ${channel.name}",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Manage: ${channel.name}",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = safeDismiss,
+                        modifier = Modifier.focusRequester(focusRequester)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
 
                 if (showCreateGroup) {
                     OutlinedTextField(
@@ -74,106 +110,121 @@ fun AddToGroupDialog(
                         }
                     }
                 } else {
-                    // Favorites Toggle
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Button(
-                            onClick = onToggleFavorite,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isFavorite) Color.Yellow else MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = null,
-                                tint = if (isFavorite) Color.Black else Color.White
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (isFavorite) "Remove from Favorites" else "Add to Favorites",
-                                color = if (isFavorite) Color.Black else Color.White
-                            )
-                        }
-                    }
-                    
-                    // Reordering Controls (only if enabled)
-                    if (onMoveUp != null && onMoveDown != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Reorder",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            OutlinedButton(onClick = onMoveUp, modifier = Modifier.weight(1f)) {
-                                Text("Move Up")
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            OutlinedButton(onClick = onMoveDown, modifier = Modifier.weight(1f)) {
-                                Text("Move Down")
-                            }
-                        }
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                    Text(
-                        text = "Custom Groups",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-
+                    // Content in a scrollable container to prevent cut-off
                     LazyColumn(
-                        modifier = Modifier.weight(1f, fill = false).heightIn(max = 200.dp)
+                        modifier = Modifier.weight(1f, fill = false),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        item {
+                            // Favorites Toggle
+                            var isFocused by remember { mutableStateOf(false) }
+                            Button(
+                                onClick = onToggleFavorite,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onFocusChanged { isFocused = it.isFocused }
+                                    .border(
+                                        if (isFocused) 2.dp else 0.dp,
+                                        if (isFocused) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                        CircleShape
+                                    ),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isFavorite) Color.Yellow else MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = if (isFavorite) Color.Black else Color.White
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+                                    color = if (isFavorite) Color.Black else Color.White
+                                )
+                            }
+                        }
+
+                        // Reordering Controls (only if enabled)
+                        if (onMoveUp != null && onMoveDown != null) {
+                            item {
+                                Text(
+                                    text = "Reorder",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    OutlinedButton(onClick = onMoveUp, modifier = Modifier.weight(1f)) {
+                                        Text("Move Up")
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    OutlinedButton(onClick = onMoveDown, modifier = Modifier.weight(1f)) {
+                                        Text("Move Down")
+                                    }
+                                }
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            }
+                        }
+
+                        item {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            Text(
+                                text = "Custom Groups",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                        }
+
                         items(groups) { group ->
-                            // We need to know if channel is already in this group. 
-                            // Since we don't have that info passed easily, we perform the check in UI state upstream?
-                            // Or we treat it as toggle logic in repository.
-                            // For now, let's assume we can add/remove blindly or we need state.
-                            // Ideally check if channel is in group.
-                            // Let's assume clicking specific action adds/removes.
+                            val groupId = -group.id
+                            val isMember = memberOfGroups.contains(groupId)
+                            var isFocused by remember { mutableStateOf(false) }
                             
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(group.name, style = MaterialTheme.typography.bodyMedium)
-                                
-                                // Simplified: "Add" button always visible? 
-                                // Or we need to know membership. 
-                                // Let's use simple buttons for now "Add" / "Remove" logic is clearer 
-                                // if we don't have membership state here.
-                                // BUT user experience is better with checkboxes.
-                                // I will assume we can make the parent pass membership info.
-                                // For now, simple Button "Add to Group" is safer.
-                                
-                                Button(onClick = { onAddToGroup(group) }) {
-                                    Text("Add")
+                                Text(
+                                    text = group.name, 
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Button(
+                                    onClick = { 
+                                        if (isMember) onRemoveFromGroup(group) else onAddToGroup(group) 
+                                    },
+                                    modifier = Modifier
+                                        .onFocusChanged { isFocused = it.isFocused }
+                                        .border(
+                                            if (isFocused) 2.dp else 0.dp,
+                                            if (isFocused) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                            CircleShape
+                                        ),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isMember) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = if (isMember) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                ) {
+                                    Text(if (isMember) "Remove" else "Add")
                                 }
                             }
                         }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = { showCreateGroup = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Create New Group")
+                        
+                        item {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = { showCreateGroup = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Create New Group")
+                            }
+                        }
                     }
                 }
             }

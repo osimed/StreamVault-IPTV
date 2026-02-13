@@ -2,6 +2,7 @@ package com.streamvault.data.repository
 
 import com.streamvault.data.local.dao.CategoryDao
 import com.streamvault.data.local.dao.ChannelDao
+import com.streamvault.data.local.entity.CategoryCount
 import com.streamvault.data.mapper.toDomain
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.Channel
@@ -10,6 +11,7 @@ import com.streamvault.domain.model.Result
 import com.streamvault.domain.repository.ChannelRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,11 +25,33 @@ class ChannelRepositoryImpl @Inject constructor(
         channelDao.getByProvider(providerId).map { entities -> entities.map { it.toDomain() } }
 
     override fun getChannelsByCategory(providerId: Long, categoryId: Long): Flow<List<Channel>> =
-        channelDao.getByCategory(providerId, categoryId).map { entities -> entities.map { it.toDomain() } }
+        if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
+            channelDao.getByProvider(providerId).map { entities -> entities.map { it.toDomain() } }
+        } else {
+            channelDao.getByCategory(providerId, categoryId).map { entities -> entities.map { it.toDomain() } }
+        }
 
     override fun getCategories(providerId: Long): Flow<List<Category>> =
-        categoryDao.getByProviderAndType(providerId, ContentType.LIVE.name)
-            .map { entities -> entities.map { it.toDomain() } }
+        combine(
+            categoryDao.getByProviderAndType(providerId, ContentType.LIVE.name),
+            channelDao.getCategoryCounts(providerId),
+            channelDao.getCount(providerId)
+        ) { categories, counts, totalCount ->
+            val countMap = counts.associate { it.categoryId to it.item_count }
+            
+            val allChannelsCategory = Category(
+                id = ChannelRepository.ALL_CHANNELS_ID,
+                name = "All Channels",
+                type = ContentType.LIVE,
+                count = totalCount
+            )
+            
+            val mappedCategories = categories.map { entity ->
+                entity.toDomain().copy(count = countMap[entity.categoryId] ?: 0)
+            }
+            
+            listOf(allChannelsCategory) + mappedCategories
+        }
 
     override fun searchChannels(providerId: Long, query: String): Flow<List<Channel>> =
         channelDao.search(providerId, query).map { entities -> entities.map { it.toDomain() } }

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "15b565221157cd14c584e8fb02ef82d1",
+    "identityHash": "2607ef936d82d6579c34e49871f8ee3d",
     "entities": [
       {
         "tableName": "providers",
@@ -922,14 +922,15 @@
         },
         "indices": [
           {
-            "name": "index_favorites_content_id_content_type",
+            "name": "index_favorites_content_id_content_type_group_id",
             "unique": true,
             "columnNames": [
               "content_id",
-              "content_type"
+              "content_type",
+              "group_id"
             ],
             "orders": [],
-            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_favorites_content_id_content_type` ON `${TABLE_NAME}` (`content_id`, `content_type`)"
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_favorites_content_id_content_type_group_id` ON `${TABLE_NAME}` (`content_id`, `content_type`, `group_id`)"
           },
           {
             "name": "index_favorites_group_id",
@@ -1010,7 +1011,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '15b565221157cd14c584e8fb02ef82d1')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '2607ef936d82d6579c34e49871f8ee3d')"
     ]
   }
 }

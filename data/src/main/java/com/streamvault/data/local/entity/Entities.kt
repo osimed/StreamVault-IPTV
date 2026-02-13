@@ -186,7 +186,7 @@ data class ProgramEntity(
 @Entity(
     tableName = "favorites",
     indices = [
-        Index(value = ["content_id", "content_type"], unique = true),
+        Index(value = ["content_id", "content_type", "group_id"], unique = true),
         Index(value = ["group_id"]),
         Index(value = ["position"])
     ]
@@ -213,3 +213,10 @@ data class VirtualGroupEntity(
     val position: Int = 0,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
 )
+
+data class CategoryCount(
+    @ColumnInfo(name = "category_id") val categoryId: Long,
+    @ColumnInfo(name = "item_count") val item_count: Int
+)
+
+

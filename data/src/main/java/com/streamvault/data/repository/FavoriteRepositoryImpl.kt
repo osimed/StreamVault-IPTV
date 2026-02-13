@@ -2,6 +2,7 @@ package com.streamvault.data.repository
 
 import com.streamvault.data.local.dao.FavoriteDao
 import com.streamvault.data.local.dao.VirtualGroupDao
+import com.streamvault.data.local.entity.CategoryCount
 import com.streamvault.data.mapper.toDomain
 import com.streamvault.data.mapper.toEntity
 import com.streamvault.domain.model.*
@@ -19,9 +20,9 @@ class FavoriteRepositoryImpl @Inject constructor(
 
     override fun getFavorites(contentType: ContentType?): Flow<List<Favorite>> {
         val flow = if (contentType != null) {
-            favoriteDao.getByType(contentType.name)
+            favoriteDao.getGlobalByType(contentType.name)
         } else {
-            favoriteDao.getAll()
+            favoriteDao.getAllGlobal()
         }
         return flow.map { entities -> entities.map { it.toDomain() } }
     }
@@ -32,12 +33,19 @@ class FavoriteRepositoryImpl @Inject constructor(
     override fun getGroups(): Flow<List<VirtualGroup>> =
         virtualGroupDao.getAll().map { entities -> entities.map { it.toDomain() } }
 
+    override fun getGlobalLiveFavoriteCount(): Flow<Int> =
+        favoriteDao.getGlobalLiveCount()
+
+    override fun getGroupLiveFavoriteCounts(): Flow<Map<Long, Int>> =
+        favoriteDao.getGroupLiveCounts()
+            .map { list -> list.associate { it.categoryId to it.item_count } }
+
     override suspend fun addFavorite(
         contentId: Long,
         contentType: ContentType,
         groupId: Long?
     ): Result<Unit> = try {
-        val maxPos = favoriteDao.getMaxPosition() ?: -1
+        val maxPos = favoriteDao.getMaxPosition(groupId) ?: -1
         val favorite = Favorite(
             contentId = contentId,
             contentType = contentType,
@@ -50,8 +58,8 @@ class FavoriteRepositoryImpl @Inject constructor(
         Result.error("Failed to add favorite: ${e.message}", e)
     }
 
-    override suspend fun removeFavorite(contentId: Long, contentType: ContentType): Result<Unit> = try {
-        favoriteDao.delete(contentId, contentType.name)
+    override suspend fun removeFavorite(contentId: Long, contentType: ContentType, groupId: Long?): Result<Unit> = try {
+        favoriteDao.delete(contentId, contentType.name, groupId)
         Result.success(Unit)
     } catch (e: Exception) {
         Result.error("Failed to remove favorite: ${e.message}", e)
@@ -67,8 +75,12 @@ class FavoriteRepositoryImpl @Inject constructor(
         Result.error("Failed to reorder favorites: ${e.message}", e)
     }
 
+    // Checks if content is in Global Favorites (groupId = null)
     override suspend fun isFavorite(contentId: Long, contentType: ContentType): Boolean =
-        favoriteDao.get(contentId, contentType.name) != null
+        favoriteDao.get(contentId, contentType.name, null) != null
+
+    override suspend fun getGroupMemberships(contentId: Long, contentType: ContentType): List<Long> =
+        favoriteDao.getGroupMemberships(contentId, contentType.name)
 
     override suspend fun createGroup(name: String, iconEmoji: String?): Result<VirtualGroup> = try {
         val id = virtualGroupDao.insert(
@@ -94,12 +106,5 @@ class FavoriteRepositoryImpl @Inject constructor(
         Result.success(Unit)
     } catch (e: Exception) {
         Result.error("Failed to rename group: ${e.message}", e)
-    }
-
-    override suspend fun moveToGroup(favoriteId: Long, groupId: Long?): Result<Unit> = try {
-        favoriteDao.updateGroup(favoriteId, groupId)
-        Result.success(Unit)
-    } catch (e: Exception) {
-        Result.error("Failed to move favorite: ${e.message}", e)
     }
 }

@@ -131,5 +131,5 @@ Execution failed for task ':data:kspDebugKotlin'.
 > Run with --scan to get full insights.
 > Get more help at https://help.gradle.org.
 
-BUILD FAILED in 3s
+BUILD FAILED in 4s
 79 actionable tasks: 1 executed, 78 up-to-date

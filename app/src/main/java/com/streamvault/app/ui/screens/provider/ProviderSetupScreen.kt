@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -15,7 +16,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -64,11 +67,13 @@ class ProviderSetupViewModel @Inject constructor(
         }
         
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, validationError = null) }
-            when (val result = providerRepository.loginXtream(serverUrl, username, password, name)) {
+            _uiState.update { it.copy(isLoading = true, validationError = null, syncProgress = "Connecting...") }
+            when (val result = providerRepository.loginXtream(serverUrl, username, password, name, onProgress = { msg ->
+                _uiState.update { it.copy(syncProgress = msg) }
+            })) {
                 is Result.Success -> {
                     _uiState.update {
-                        it.copy(isLoading = false, loginSuccess = true, error = null)
+                        it.copy(isLoading = false, loginSuccess = true, error = null, syncProgress = null)
                     }
                 }
                 is Result.Error -> {
@@ -83,7 +88,7 @@ class ProviderSetupViewModel @Inject constructor(
                         else -> result.message
                     }
                     _uiState.update {
-                        it.copy(isLoading = false, error = userMessage)
+                        it.copy(isLoading = false, error = userMessage, syncProgress = null)
                     }
                 }
                 is Result.Loading -> { /* no-op */ }
@@ -102,16 +107,18 @@ class ProviderSetupViewModel @Inject constructor(
         }
         
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, validationError = null) }
-            when (val result = providerRepository.validateM3u(url, name)) {
+            _uiState.update { it.copy(isLoading = true, validationError = null, syncProgress = "Validating...") }
+            when (val result = providerRepository.validateM3u(url, name, onProgress = { msg ->
+                _uiState.update { it.copy(syncProgress = msg) }
+            })) {
                 is Result.Success -> {
                     _uiState.update {
-                        it.copy(isLoading = false, loginSuccess = true, error = null)
+                        it.copy(isLoading = false, loginSuccess = true, error = null, syncProgress = null)
                     }
                 }
                 is Result.Error -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Could not validate playlist URL — please check the URL: ${result.message}")
+                        it.copy(isLoading = false, error = "Could not validate playlist URL — please check the URL: ${result.message}", syncProgress = null)
                     }
                 }
                 is Result.Loading -> { /* no-op */ }
@@ -125,7 +132,8 @@ data class ProviderSetupState(
     val loginSuccess: Boolean = false,
     val hasExistingProvider: Boolean = false,
     val error: String? = null,
-    val validationError: String? = null
+    val validationError: String? = null,
+    val syncProgress: String? = null
 )
 
 // ── Screen ─────────────────────────────────────────────────────────
@@ -234,6 +242,34 @@ fun ProviderSetupScreen(
                     text = error,
                     style = MaterialTheme.typography.bodySmall,
                     color = ErrorColor
+                )
+            }
+        }
+    }
+
+    if (uiState.syncProgress != null) {
+        SyncProgressDialog(message = uiState.syncProgress!!)
+    }
+}
+
+@Composable
+fun SyncProgressDialog(message: String) {
+    Dialog(onDismissRequest = {}) {
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.width(300.dp).padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center
                 )
             }
         }

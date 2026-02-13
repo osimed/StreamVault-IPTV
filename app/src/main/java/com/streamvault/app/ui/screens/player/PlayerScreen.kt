@@ -64,7 +64,7 @@ class PlayerViewModel @Inject constructor(
 
     val videoFormat: StateFlow<VideoFormat> = playerEngine.videoFormat
 
-    fun prepare(streamUrl: String, epgChannelId: String?, categoryId: Long = -1, providerId: Long = -1, isVirtual: Boolean = false) {
+    fun prepare(streamUrl: String, epgChannelId: String?, internalChannelId: Long, categoryId: Long = -1, providerId: Long = -1, isVirtual: Boolean = false) {
         val streamInfo = StreamInfo(
             url = streamUrl,
             streamType = com.streamvault.domain.model.StreamType.UNKNOWN
@@ -76,11 +76,15 @@ class PlayerViewModel @Inject constructor(
             currentCategoryId = categoryId
             currentProviderId = providerId
             isVirtualCategory = isVirtual
-            loadPlaylist(categoryId, providerId, isVirtual)
+            loadPlaylist(categoryId, providerId, isVirtual, internalChannelId)
         } else {
              // If playlist already loaded, just update index
-             if (channelList.isNotEmpty()) {
-                 currentChannelIndex = channelList.indexOfFirst { it.streamUrl == streamUrl }
+             if (channelList.isNotEmpty() && internalChannelId != -1L) {
+                 currentChannelIndex = channelList.indexOfFirst { it.id == internalChannelId }
+                 // Fallback to URL if ID fail
+                 if (currentChannelIndex == -1) {
+                     currentChannelIndex = channelList.indexOfFirst { it.streamUrl == streamUrl }
+                 }
              }
         }
         currentStreamUrl = streamUrl
@@ -102,7 +106,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun loadPlaylist(categoryId: Long, providerId: Long, isVirtual: Boolean) {
+    private fun loadPlaylist(categoryId: Long, providerId: Long, isVirtual: Boolean, initialChannelId: Long) {
         playlistJob?.cancel()
         playlistJob = viewModelScope.launch {
             val flows = if (isVirtual) {
@@ -139,14 +143,13 @@ class PlayerViewModel @Inject constructor(
             
             flows.collect { channels ->
                 channelList = channels
-                // Recalculate index based on currently playing URL (from prepare call)
-                // We'll rely on prepare checking streamUrl.
-                // But prepare is called ONCE.
-                // We should update index here if we can match the URL.
-                // Since we don't have URL here, we will just use playNext/playPrevious carefully.
-                // Ideally we should track currentUrl efficiently.
-                // For now, next PlayNext call will find current index if -1.
-                // But PlayNext cannot find it if we don't store it.
+                // Recalculate index based on initial ID or URL
+                if (initialChannelId != -1L) {
+                    currentChannelIndex = channelList.indexOfFirst { it.id == initialChannelId }
+                }
+                if (currentChannelIndex == -1) {
+                    currentChannelIndex = channelList.indexOfFirst { it.streamUrl == currentStreamUrl }
+                }
             }
         }
     }
@@ -212,7 +215,8 @@ class PlayerViewModel @Inject constructor(
     }
     
     fun retryStream(streamUrl: String, epgChannelId: String?) {
-        prepare(streamUrl, epgChannelId, currentCategoryId, currentProviderId, isVirtualCategory)
+        val currentId = if (currentChannelIndex != -1 && channelList.isNotEmpty()) channelList[currentChannelIndex].id else -1L
+        prepare(streamUrl, epgChannelId, currentId, currentCategoryId, currentProviderId, isVirtualCategory)
     }
 
     override fun onCleared() {
@@ -228,6 +232,7 @@ fun PlayerScreen(
     streamUrl: String,
     title: String,
     epgChannelId: String? = null,
+    internalChannelId: Long = -1L,
     categoryId: Long? = null,
     providerId: Long? = null,
     isVirtual: Boolean = false,
@@ -253,7 +258,7 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(streamUrl, epgChannelId) {
-        viewModel.prepare(streamUrl, epgChannelId, categoryId ?: -1, providerId ?: -1, isVirtual)
+        viewModel.prepare(streamUrl, epgChannelId, internalChannelId, categoryId ?: -1, providerId ?: -1, isVirtual)
     }
 
     LaunchedEffect(showControls) {

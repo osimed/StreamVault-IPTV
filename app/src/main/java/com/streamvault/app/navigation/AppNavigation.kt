@@ -21,12 +21,12 @@ object Routes {
     const val SERIES = "series"
     const val FAVORITES = "favorites"
     const val SETTINGS = "settings"
-    const val PLAYER = "player/{streamUrl}?title={title}&channelId={channelId}&categoryId={categoryId}&providerId={providerId}&isVirtual={isVirtual}"
+    const val PLAYER = "player/{streamUrl}?title={title}&channelId={channelId}&internalId={internalId}&categoryId={categoryId}&providerId={providerId}&isVirtual={isVirtual}"
     const val SEARCH = "search"
     const val SERIES_DETAIL = "series_detail/{seriesId}"
 
-    fun player(streamUrl: String, title: String = "", channelId: String? = null, categoryId: Long? = null, providerId: Long? = null, isVirtual: Boolean = false) =
-        "player/${java.net.URLEncoder.encode(streamUrl, "UTF-8")}?title=${java.net.URLEncoder.encode(title, "UTF-8")}&channelId=${channelId ?: ""}&categoryId=${categoryId ?: -1}&providerId=${providerId ?: -1}&isVirtual=$isVirtual"
+    fun player(streamUrl: String, title: String = "", channelId: String? = null, internalId: Long = -1L, categoryId: Long? = null, providerId: Long? = null, isVirtual: Boolean = false) =
+        "player/${java.net.URLEncoder.encode(streamUrl, "UTF-8")}?title=${java.net.URLEncoder.encode(title, "UTF-8")}&channelId=${channelId ?: ""}&internalId=$internalId&categoryId=${categoryId ?: -1}&providerId=${providerId ?: -1}&isVirtual=$isVirtual"
         
     fun seriesDetail(seriesId: Long) = "series_detail/$seriesId"
 }
@@ -57,6 +57,7 @@ fun AppNavigation() {
                             streamUrl = channel.streamUrl,
                             title = channel.name,
                             channelId = channel.epgChannelId,
+                            internalId = channel.id,
                             categoryId = category?.id,
                             providerId = provider?.id,
                             isVirtual = category?.isVirtual == true
@@ -166,6 +167,7 @@ fun AppNavigation() {
                 navArgument("streamUrl") { type = NavType.StringType },
                 navArgument("title") { type = NavType.StringType; defaultValue = "" },
                 navArgument("channelId") { type = NavType.StringType; defaultValue = "" },
+                navArgument("internalId") { type = NavType.LongType; defaultValue = -1L },
                 navArgument("categoryId") { type = NavType.LongType; defaultValue = -1L },
                 navArgument("providerId") { type = NavType.LongType; defaultValue = -1L },
                 navArgument("isVirtual") { type = NavType.BoolType; defaultValue = false }
@@ -180,6 +182,7 @@ fun AppNavigation() {
                 "UTF-8"
             )
             val channelId = backStackEntry.arguments?.getString("channelId")?.takeIf { it.isNotBlank() }
+            val internalId = backStackEntry.arguments?.getLong("internalId") ?: -1L
             val categoryId = backStackEntry.arguments?.getLong("categoryId")?.takeIf { it != -1L }
             val providerId = backStackEntry.arguments?.getLong("providerId")?.takeIf { it != -1L }
             val isVirtual = backStackEntry.arguments?.getBoolean("isVirtual") ?: false
@@ -188,6 +191,7 @@ fun AppNavigation() {
                 streamUrl = streamUrl,
                 title = title,
                 epgChannelId = channelId,
+                internalChannelId = internalId,
                 categoryId = categoryId,
                 providerId = providerId,
                 isVirtual = isVirtual,

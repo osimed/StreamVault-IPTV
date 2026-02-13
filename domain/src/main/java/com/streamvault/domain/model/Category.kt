@@ -5,5 +5,6 @@ data class Category(
     val name: String,
     val parentId: Long? = null,
     val type: ContentType = ContentType.LIVE,
-    val isVirtual: Boolean = false
+    val isVirtual: Boolean = false,
+    val count: Int = 0
 )

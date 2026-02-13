@@ -2,6 +2,7 @@ package com.streamvault.data.repository
 
 import com.streamvault.data.local.dao.*
 import com.streamvault.data.local.entity.CategoryEntity
+import com.streamvault.data.local.entity.ProviderEntity
 import com.streamvault.data.mapper.*
 import com.streamvault.data.parser.M3uParser
 import com.streamvault.data.remote.xtream.XtreamApiService
@@ -80,70 +81,117 @@ class ProviderRepositoryImpl @Inject constructor(
         serverUrl: String,
         username: String,
         password: String,
-        name: String
+        name: String,
+        onProgress: ((String) -> Unit)?
     ): Result<Provider> {
+        onProgress?.invoke("Authenticating...")
         val provider = createXtreamProvider(0, serverUrl, username, password)
         return when (val authResult = provider.authenticate()) {
             is Result.Success -> {
-                // Use the provided name, or fallback to server's name if empty
-                val providerData = authResult.data.copy(
-                    name = name.ifBlank { authResult.data.name }
-                )
-                val id = providerDao.insert(providerData.toEntity())
-                providerDao.deactivateAll()
-                providerDao.activate(id)
-                val savedProvider = providerData.copy(id = id)
-                // Auto-refresh: fetch all channels, movies, series immediately
-                try {
-                    refreshXtreamData(savedProvider)
-                    providerDao.updateSyncTime(id, System.currentTimeMillis())
-                } catch (_: Exception) {
-                    // Provider is added even if initial refresh fails
+                // Check if provider already exists
+                val existingProvider = providerDao.getByUrlAndUser(serverUrl, username)
+                
+                val providerData = if (existingProvider != null) {
+                    onProgress?.invoke("Updating existing provider...")
+                    // Update existing provider details
+                    val updated = existingProvider.copy(
+                        name = name.ifBlank { existingProvider.name },
+                        password = password, // Update password if changed
+                        isActive = true,
+                        lastSyncedAt = 0 // Reset sync time to force update? Or keep?
+                    )
+                    providerDao.update(updated)
+                    updated.toDomain()
+                } else {
+                    // Use the provided name, or fallback to server's name if empty
+                    val newData = authResult.data.copy(
+                        name = name.ifBlank { authResult.data.name }
+                    )
+                    val id = providerDao.insert(newData.toEntity())
+                    newData.copy(id = id)
                 }
-                Result.success(savedProvider)
+                
+                val id = providerData.id
+                
+                try {
+                    providerDao.deactivateAll()
+                    providerDao.activate(id)
+                    
+                    // Auto-refresh: fetch all channels, movies, series immediately
+                    refreshXtreamData(providerData, onProgress)
+                    providerDao.updateSyncTime(id, System.currentTimeMillis())
+                    
+                    Result.success(providerData)
+                } catch (e: Exception) {
+                    // If it was a NEW provider and failed, delete it.
+                    // If it was EXISTING, maybe don't delete?
+                    if (existingProvider == null) {
+                        providerDao.delete(id)
+                    }
+                    Result.error("Sync failed: ${e.message}", e)
+                }
             }
             is Result.Error -> Result.error(authResult.message, authResult.exception)
             is Result.Loading -> Result.error("Unexpected loading state")
         }
     }
 
-    override suspend fun validateM3u(url: String, name: String): Result<Provider> = try {
-        // For M3U, we create a provider entry and validate the URL is reachable
+    override suspend fun validateM3u(url: String, name: String, onProgress: ((String) -> Unit)?): Result<Provider> = try {
+        onProgress?.invoke("Validating playlist URL...")
         val providerName = name.ifBlank { 
             url.substringAfterLast("/").substringBefore("?").ifBlank { "M3U Playlist" } 
         }
         
-        val provider = Provider(
-            name = providerName,
-            type = ProviderType.M3U,
-            serverUrl = url,
-            m3uUrl = url,
-            status = ProviderStatus.ACTIVE
-        )
-        val id = providerDao.insert(provider.toEntity())
-        providerDao.deactivateAll()
-        providerDao.activate(id)
-        val savedProvider = provider.copy(id = id)
-        // Auto-refresh: download and parse M3U immediately
-        try {
-            refreshM3uData(savedProvider)
-            providerDao.updateSyncTime(id, System.currentTimeMillis())
-        } catch (_: Exception) {
-            // Provider is added even if initial parsing fails
+        // Check for existing
+        val existingProvider = providerDao.getByUrlAndUser(url, "")
+        
+        val providerData = if (existingProvider != null) {
+            val updated = existingProvider.copy(
+                name = if (name.isNotBlank()) name else existingProvider.name,
+                isActive = true
+            )
+            providerDao.update(updated)
+            updated.toDomain()
+        } else {
+            val provider = Provider(
+                name = providerName,
+                type = ProviderType.M3U,
+                serverUrl = url,
+                m3uUrl = url,
+                status = ProviderStatus.ACTIVE
+            )
+            val id = providerDao.insert(provider.toEntity())
+            provider.copy(id = id)
         }
-        Result.success(savedProvider)
+        
+        val id = providerData.id
+
+        try {
+            providerDao.deactivateAll()
+            providerDao.activate(id)
+            
+            refreshM3uData(providerData, onProgress)
+            providerDao.updateSyncTime(id, System.currentTimeMillis())
+            
+            Result.success(providerData)
+        } catch (e: Exception) {
+             if (existingProvider == null) {
+                providerDao.delete(id)
+            }
+            throw e 
+        }
     } catch (e: Exception) {
         Result.error("Failed to add M3U provider: ${e.message}", e)
     }
 
-    override suspend fun refreshProviderData(providerId: Long): Result<Unit> = try {
+    override suspend fun refreshProviderData(providerId: Long, onProgress: ((String) -> Unit)?): Result<Unit> = try {
         val providerEntity = providerDao.getById(providerId)
             ?: return Result.error("Provider not found")
         val provider = providerEntity.toDomain()
 
         when (provider.type) {
-            ProviderType.XTREAM_CODES -> refreshXtreamData(provider)
-            ProviderType.M3U -> refreshM3uData(provider)
+            ProviderType.XTREAM_CODES -> refreshXtreamData(provider, onProgress)
+            ProviderType.M3U -> refreshM3uData(provider, onProgress)
         }
 
         providerDao.updateSyncTime(providerId, System.currentTimeMillis())
@@ -152,34 +200,51 @@ class ProviderRepositoryImpl @Inject constructor(
         Result.error("Failed to refresh provider data: ${e.message}", e)
     }
 
-    private suspend fun refreshXtreamData(provider: Provider) {
+    private suspend fun refreshXtreamData(provider: Provider, onProgress: ((String) -> Unit)? = null) {
+        onProgress?.invoke("Connecting to server...")
         val xtreamProvider = createXtreamProvider(
             provider.id, provider.serverUrl, provider.username, provider.password
         )
 
         // Refresh live categories & channels
-        xtreamProvider.getLiveCategories().getOrNull()?.let { categories ->
+        onProgress?.invoke("Downloading Live TV...")
+        val liveCatsResult = xtreamProvider.getLiveCategories()
+        if (liveCatsResult is Result.Error) throw Exception("Failed to fetch Live Categories: ${liveCatsResult.message}")
+        
+        liveCatsResult.getOrNull()?.let { categories ->
             categoryDao.replaceAll(
                 provider.id, "LIVE",
                 categories.map { it.toEntity(provider.id) }
             )
         }
-        xtreamProvider.getLiveStreams().getOrNull()?.let { channels ->
+        
+        val liveStreamsResult = xtreamProvider.getLiveStreams()
+        if (liveStreamsResult is Result.Error) throw Exception("Failed to fetch Live Streams: ${liveStreamsResult.message}")
+        
+        liveStreamsResult.getOrNull()?.let { channels ->
             channelDao.replaceAll(provider.id, channels.map { it.toEntity() })
         }
 
         // Refresh VOD categories & movies
-        xtreamProvider.getVodCategories().getOrNull()?.let { categories ->
+        onProgress?.invoke("Downloading Movies...")
+        val vodCatsResult = xtreamProvider.getVodCategories()
+        // Don't fail entire sync if VOD fails, but maybe log it? For now, let's keep it strict or lenient?
+        // User complaint was "nothing loads". If connection works for auth, it should work for data.
+        // Let's be semi-strict: If Live works, we're good. If VOD fails, just log.
+        
+        vodCatsResult.getOrNull()?.let { categories ->
             categoryDao.replaceAll(
                 provider.id, "MOVIE",
                 categories.map { it.toEntity(provider.id) }
             )
         }
+        
         xtreamProvider.getVodStreams().getOrNull()?.let { movies ->
             movieDao.replaceAll(provider.id, movies.map { it.toEntity() })
         }
 
         // Refresh series categories & series
+        onProgress?.invoke("Downloading Series...")
         xtreamProvider.getSeriesCategories().getOrNull()?.let { categories ->
             categoryDao.replaceAll(
                 provider.id, "SERIES",
@@ -191,18 +256,18 @@ class ProviderRepositoryImpl @Inject constructor(
         }
 
         // Refresh EPG (XMLTV)
-        // Construct XMLTV URL: http://server:port/xmltv.php?username=...&password=...
         try {
+            onProgress?.invoke("Downloading EPG...")
             val serverUrl = provider.serverUrl.trimEnd('/')
             val xmltvUrl = "$serverUrl/xmltv.php?username=${provider.username}&password=${provider.password}"
             epgRepository.refreshEpg(provider.id, xmltvUrl)
         } catch (e: Exception) {
-            // Log error but don't fail the whole refresh if EPG fails
             e.printStackTrace()
         }
     }
 
-    private suspend fun refreshM3uData(provider: Provider) = withContext(Dispatchers.IO) {
+    private suspend fun refreshM3uData(provider: Provider, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
+        onProgress?.invoke("Downloading Playlist...")
         val m3uUrl = provider.m3uUrl.ifBlank { provider.serverUrl }
         val request = Request.Builder().url(m3uUrl).build()
         val response = okHttpClient.newCall(request).execute()
@@ -213,6 +278,7 @@ class ProviderRepositoryImpl @Inject constructor(
 
         val body = response.body ?: throw Exception("Empty M3U response")
 
+        onProgress?.invoke("Parsing Playlist...")
         val entries = body.byteStream().use { inputStream ->
             m3uParser.parse(inputStream)
         }
@@ -226,6 +292,7 @@ class ProviderRepositoryImpl @Inject constructor(
         val vodGroups = vodEntries.map { it.groupTitle }.distinct()
 
         // Insert live categories
+        onProgress?.invoke("Saving Channels...")
         val liveCategories = liveGroups.mapIndexed { index, name ->
             CategoryEntity(
                 categoryId = (index + 1).toLong(),
@@ -238,6 +305,7 @@ class ProviderRepositoryImpl @Inject constructor(
         categoryDao.replaceAll(provider.id, "LIVE", liveCategories)
 
         // Insert VOD categories
+        onProgress?.invoke("Saving Movies...")
         val vodCategories = vodGroups.mapIndexed { index, name ->
             CategoryEntity(
                 categoryId = (index + 10000).toLong(),
