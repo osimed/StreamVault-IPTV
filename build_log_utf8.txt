@@ -44,7 +44,13 @@
 > Task :player:generateDebugRFile UP-TO-DATE
 > Task :app:processDebugResources UP-TO-DATE
 > Task :data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :data:kspDebugKotlin UP-TO-DATE
+> Task :data:compileDebugKotlin UP-TO-DATE
 > Task :data:javaPreCompileDebug UP-TO-DATE
+> Task :data:compileDebugJavaWithJavac UP-TO-DATE
+> Task :data:copyRoomSchemas NO-SOURCE
+> Task :data:transformDebugClassesWithAsm UP-TO-DATE
+> Task :data:bundleLibCompileToJarDebug UP-TO-DATE
 > Task :player:checkKotlinGradlePluginConfigurationErrors SKIPPED
 > Task :player:kspDebugKotlin UP-TO-DATE
 > Task :player:compileDebugKotlin UP-TO-DATE
@@ -66,14 +72,18 @@
 > Task :player:packageDebugAssets UP-TO-DATE
 > Task :app:mergeDebugAssets UP-TO-DATE
 > Task :app:compressDebugAssets UP-TO-DATE
+> Task :data:bundleLibRuntimeToJarDebug UP-TO-DATE
 > Task :player:bundleLibRuntimeToJarDebug UP-TO-DATE
 > Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :data:processDebugJavaRes UP-TO-DATE
 > Task :player:processDebugJavaRes UP-TO-DATE
 > Task :app:checkDebugDuplicateClasses UP-TO-DATE
 > Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :data:bundleLibRuntimeToDirDebug UP-TO-DATE
 > Task :player:bundleLibRuntimeToDirDebug UP-TO-DATE
 > Task :app:mergeDebugJniLibFolders UP-TO-DATE
 > Task :data:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
 > Task :data:mergeDebugNativeLibs NO-SOURCE
 > Task :data:copyDebugJniLibsProjectOnly UP-TO-DATE
 > Task :player:mergeDebugJniLibFolders UP-TO-DATE
@@ -86,9 +96,16 @@
 > Task :app:writeDebugSigningConfigVersions UP-TO-DATE
 > Task :data:stripDebugDebugSymbols NO-SOURCE
 > Task :data:copyDebugJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :data:extractDebugAnnotations UP-TO-DATE
 > Task :data:extractDeepLinksForAarDebug UP-TO-DATE
+> Task :data:mergeDebugGeneratedProguardFiles UP-TO-DATE
+> Task :data:mergeDebugConsumerProguardFiles UP-TO-DATE
 > Task :data:prepareDebugArtProfile UP-TO-DATE
 > Task :data:prepareLintJarForPublish UP-TO-DATE
+> Task :data:mergeDebugJavaResource UP-TO-DATE
+> Task :data:syncDebugLibJars UP-TO-DATE
+> Task :data:bundleDebugAar UP-TO-DATE
+> Task :data:assembleDebug UP-TO-DATE
 > Task :player:stripDebugDebugSymbols NO-SOURCE
 > Task :player:copyDebugJniLibsProjectAndLocalJars UP-TO-DATE
 > Task :player:extractDebugAnnotations UP-TO-DATE
@@ -101,28 +118,38 @@
 > Task :player:syncDebugLibJars UP-TO-DATE
 > Task :player:bundleDebugAar UP-TO-DATE
 > Task :player:assembleDebug UP-TO-DATE
+> Task :app:kspDebugKotlin
 
-> Task :data:kspDebugKotlin FAILED
-e: [ksp] [MissingType]: Element 'com.streamvault.data.local.StreamVaultDatabase' references a type that is not present
-e: Error occurred in KSP, check log for detail
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:39:13 Expecting ')'
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:39:26 Expecting an element
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:39:34 Expecting an element
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:52:13 Expecting member declaration
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:52:19 Expecting member declaration
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:52:20 Expecting member declaration
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:52:39 Expecting member declaration
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:52:41 Expecting member declaration
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:52:43 Expecting member declaration
-e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/data/src/main/java/com/streamvault/data/repository/ChannelRepositoryImpl.kt:75:1 Expecting a top level declaration
-
-> Task :data:copyRoomSchemas NO-SOURCE
+> Task :app:compileDebugKotlin FAILED
+cmd : e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/app/
+src/main/java/com/streamvault/app/ui/screens/settings/SettingsScreen.kt:63:2
+5 No parameter with name 'parentalControlLevel' found.
+At line:1 char:1
++ cmd /c gradlew assembleDebug > build_log.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (e: file:///C:/U...olLevel' fou 
+   nd.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/app/src/ma
+in/java/com/streamvault/app/ui/screens/settings/SettingsScreen.kt:324:21 
+Unresolved reference 'scope'.
+e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/app/src/ma
+in/java/com/streamvault/app/ui/screens/settings/SettingsScreen.kt:358:73 
+Unresolved reference 'parentalControlLevel'.
+e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/app/src/ma
+in/java/com/streamvault/app/ui/screens/settings/SettingsScreen.kt:362:90 
+Unresolved reference 'parentalControlLevel'.
+e: file:///C:/Users/david/.gemini/antigravity/scratch/iptv-player/app/src/ma
+in/java/com/streamvault/app/ui/screens/settings/SettingsScreen.kt:366:90 
+Unresolved reference 'parentalControlLevel'.
 
 FAILURE: Build failed with an exception.
 
 * What went wrong:
-Execution failed for task ':data:kspDebugKotlin'.
-> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+Execution failed for task ':app:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.Gra
+dleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
    > Compilation error. See log for more details
 
 * Try:
@@ -131,5 +158,5 @@ Execution failed for task ':data:kspDebugKotlin'.
 > Run with --scan to get full insights.
 > Get more help at https://help.gradle.org.
 
-BUILD FAILED in 3s
-79 actionable tasks: 1 executed, 78 up-to-date
+BUILD FAILED in 9s
+95 actionable tasks: 2 executed, 93 up-to-date

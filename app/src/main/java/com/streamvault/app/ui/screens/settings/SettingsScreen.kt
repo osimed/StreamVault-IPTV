@@ -19,6 +19,15 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.Switch
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.HorizontalDivider
+
+import com.streamvault.app.ui.components.dialogs.PinDialog
 import com.streamvault.app.ui.components.TopNavBar
 import com.streamvault.app.ui.theme.*
 import com.streamvault.domain.model.Provider
@@ -42,14 +51,16 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 providerRepository.getProviders(),
-                preferencesRepository.lastActiveProviderId
-            ) { providers, activeId ->
-                Pair(providers, activeId)
-            }.collect { (providers, activeId) ->
+                preferencesRepository.lastActiveProviderId,
+                preferencesRepository.parentalControlLevel
+            ) { providers, activeId, level ->
+                Triple(providers, activeId, level)
+            }.collect { (providers, activeId, level) ->
                 _uiState.update {
                     it.copy(
                         providers = providers,
-                        activeProviderId = activeId
+                        activeProviderId = activeId,
+                        parentalControlLevel = level
                     )
                 }
             }
@@ -63,6 +74,29 @@ class SettingsViewModel @Inject constructor(
              // Force sync on connect
              refreshProvider(providerId)
         }
+    }
+
+    fun setParentalControlLevel(level: Int) {
+        viewModelScope.launch {
+            preferencesRepository.setParentalControlLevel(level)
+        }
+    }
+    
+    suspend fun verifyPin(pin: String): Boolean {
+        // Simple verification for now. In a real app we might hash this.
+        val currentPin = preferencesRepository.parentalPin.firstOrNull() ?: "0000"
+        return pin == currentPin
+    }
+    
+    fun changePin(newPin: String) {
+        viewModelScope.launch {
+            preferencesRepository.setParentalPin(newPin)
+            _uiState.update { it.copy(userMessage = "PIN changed successfully") }
+        }
+    }
+    
+    fun clearUserMessage() {
+        _uiState.update { it.copy(userMessage = null) }
     }
 
     fun refreshProvider(providerId: Long) {
@@ -95,7 +129,8 @@ data class SettingsUiState(
     val providers: List<Provider> = emptyList(),
     val activeProviderId: Long? = null,
     val isSyncing: Boolean = false,
-    val userMessage: String? = null
+    val userMessage: String? = null,
+    val parentalControlLevel: Int = 0
 )
 
 @Composable
@@ -107,7 +142,17 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    // Parental Control State
+    var showPinDialog by remember { mutableStateOf(false) }
+    var showLevelDialog by remember { mutableStateOf(false) }
+    var pinError by remember { mutableStateOf<String?>(null) }
+    var pendingAction by remember { mutableStateOf<ParentalAction?>(null) }
+
+
 
     LaunchedEffect(uiState.userMessage) {
         uiState.userMessage?.let { message ->
@@ -171,6 +216,10 @@ fun SettingsScreen(
                         onEdit = { onEditProvider(provider) }
                     )
                 }
+
+
+
+
             }
 
             // Add Provider button
@@ -226,8 +275,9 @@ fun SettingsScreen(
                 SettingsRow(label = "App Version", value = "1.0.0")
                 SettingsRow(label = "Build", value = "StreamVault for Android TV")
             }
+            }
         }
-    }
+
 
     SnackbarHost(
         hostState = snackbarHostState,
@@ -263,6 +313,143 @@ fun SettingsScreen(
                         color = OnSurface
                     )
                 }
+            }
+        }
+
+
+        if (showPinDialog) {
+            PinDialog(
+                onDismissRequest = { 
+                    showPinDialog = false
+                    pinError = null 
+                },
+                onPinEntered = { pin ->
+                    scope.launch {
+                        if (pendingAction == ParentalAction.SetNewPin) {
+                            viewModel.changePin(pin)
+                            showPinDialog = false
+                            pendingAction = null
+                        } else {
+                            if (viewModel.verifyPin(pin)) {
+                                showPinDialog = false
+                                pinError = null
+                                when (pendingAction) {
+                                    ParentalAction.ChangeLevel -> showLevelDialog = true
+                                    ParentalAction.ChangePin -> {
+                                        pendingAction = ParentalAction.SetNewPin
+                                        showPinDialog = true 
+                                    }
+                                    else -> pendingAction = null
+                                }
+                            } else {
+                                pinError = "Incorrect PIN"
+                            }
+                        }
+                    }
+                },
+                title = if (pendingAction == ParentalAction.SetNewPin) "Enter New PIN" else "Enter PIN",
+                error = pinError
+            )
+        }
+
+        if (showLevelDialog) {
+            AlertDialog(
+                onDismissRequest = { showLevelDialog = false },
+                title = { Text("Select Protection Level") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LevelOption(0, "OFF - No restrictions", uiState.parentalControlLevel) {
+                            viewModel.setParentalControlLevel(0)
+                            showLevelDialog = false
+                        }
+                        LevelOption(1, "LOCKED - Content visible, PIN required", uiState.parentalControlLevel) {
+                            viewModel.setParentalControlLevel(1)
+                            showLevelDialog = false
+                        }
+                        LevelOption(2, "HIDDEN - Content hidden from all lists", uiState.parentalControlLevel) {
+                            viewModel.setParentalControlLevel(2)
+                            showLevelDialog = false
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showLevelDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+    }
+}
+
+private enum class ParentalAction {
+    ChangeLevel, ChangePin, SetNewPin
+}
+
+@Composable
+private fun LevelOption(level: Int, text: String, currentLevel: Int, onSelect: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onSelect)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = level == currentLevel,
+            onClick = onSelect
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = OnBackground)
+    }
+}
+
+@Composable
+private fun ParentalControlCard(
+    level: Int,
+    onChangeLevel: () -> Unit,
+    onChangePin: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(SurfaceElevated, RoundedCornerShape(8.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Protection Level", style = MaterialTheme.typography.bodyLarge, color = OnBackground)
+                Text(
+                    text = when(level) {
+                        0 -> "OFF"
+                        1 -> "LOCKED"
+                        2 -> "HIDDEN"
+                        else -> "UNKNOWN"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (level == 0) ErrorColor else Primary
+                )
+            }
+            Button(onClick = onChangeLevel) {
+                Text("Change")
+            }
+        }
+        
+        HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+        
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Parental PIN", style = MaterialTheme.typography.bodyLarge, color = OnBackground)
+            OutlinedButton(onClick = onChangePin) {
+                Text("Change PIN")
             }
         }
     }

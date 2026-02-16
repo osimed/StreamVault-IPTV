@@ -31,12 +31,16 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.TextButton
 import com.streamvault.app.ui.components.CategoryRow
 import com.streamvault.app.ui.components.ChannelCard
+import com.streamvault.app.ui.components.dialogs.PinDialog
 import com.streamvault.app.ui.components.TopNavBar
 import com.streamvault.app.ui.theme.*
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.Provider
 import com.streamvault.domain.repository.ChannelRepository
+import com.streamvault.data.preferences.PreferencesRepository
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.firstOrNull
 import com.streamvault.domain.repository.EpgRepository
 import com.streamvault.domain.repository.ProviderRepository
 import kotlinx.coroutines.Job
@@ -53,7 +57,7 @@ class HomeViewModel @Inject constructor(
     private val providerRepository: ProviderRepository,
     private val channelRepository: ChannelRepository,
     private val favoriteRepository: com.streamvault.domain.repository.FavoriteRepository,
-    private val preferencesRepository: com.streamvault.data.preferences.PreferencesRepository,
+    private val preferencesRepository: PreferencesRepository,
     private val epgRepository: EpgRepository,
     private val getCustomCategories: com.streamvault.domain.usecase.GetCustomCategories
 ) : ViewModel() {
@@ -107,8 +111,15 @@ class HomeViewModel @Inject constructor(
                 
                 _uiState.update { it.copy(filteredChannels = markedChannels, isLoading = false) }
 
-                // 3. Fetch EPG for visible channels
+            // 3. Fetch EPG for visible channels
                 fetchEpgForChannels(markedChannels)
+            }
+        }
+
+        // Observe Parental Control Level
+        viewModelScope.launch {
+            preferencesRepository.parentalControlLevel.collectLatest { level ->
+                _uiState.update { it.copy(parentalControlLevel = level) }
             }
         }
     }
@@ -418,6 +429,11 @@ class HomeViewModel @Inject constructor(
     fun onDismissDialog() {
         _uiState.update { it.copy(showDialog = false, selectedChannelForDialog = null) }
     }
+
+    suspend fun verifyPin(pin: String): Boolean {
+        val storedPin = preferencesRepository.parentalPin.firstOrNull() ?: "0000"
+        return pin == storedPin
+    }
 }
 
 data class HomeUiState(
@@ -435,7 +451,8 @@ data class HomeUiState(
     val dialogGroupMemberships: List<Long> = emptyList(),
     val userMessage: String? = null,
     val showDeleteGroupDialog: Boolean = false,
-    val groupToDelete: Category? = null
+    val groupToDelete: Category? = null,
+    val parentalControlLevel: Int = 0
 )
 
 // ── Screen ─────────────────────────────────────────────────────────
@@ -449,12 +466,51 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    
+    // Parental Control State
+    var showPinDialog by remember { mutableStateOf(false) }
+    var pinError by remember { mutableStateOf<String?>(null) }
+    var pendingUnlockCategory by remember { mutableStateOf<Category?>(null) }
+    var pendingUnlockChannel by remember { mutableStateOf<Channel?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(uiState.userMessage) {
         uiState.userMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
             viewModel.userMessageShown()
         }
+    }
+    
+    if (showPinDialog) {
+        PinDialog(
+            onDismissRequest = { 
+                showPinDialog = false
+                pinError = null
+                pendingUnlockCategory = null
+                pendingUnlockChannel = null
+            },
+            onPinEntered = { pin ->
+                scope.launch {
+                    if (viewModel.verifyPin(pin)) {
+                        showPinDialog = false
+                        pinError = null
+                        
+                        pendingUnlockCategory?.let { category ->
+                            viewModel.selectCategory(category)
+                            pendingUnlockCategory = null
+                        }
+                        
+                        pendingUnlockChannel?.let { channel ->
+                             onChannelClick(channel, uiState.selectedCategory, uiState.provider)
+                             pendingUnlockChannel = null
+                        }
+                    } else {
+                        pinError = "Incorrect PIN"
+                    }
+                }
+            },
+            error = pinError
+        )
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -521,10 +577,20 @@ fun HomeScreen(
                             },
                             key = { it.id }
                         ) { category ->
+                            val isLocked = category.isAdult && uiState.parentalControlLevel == 1
+                            
                             CategoryItem(
                                 category = category,
                                 isSelected = category.id == uiState.selectedCategory?.id,
-                                onClick = { viewModel.selectCategory(category) },
+                                isLocked = isLocked,
+                                onClick = { 
+                                    if (isLocked) {
+                                        pendingUnlockCategory = category
+                                        showPinDialog = true
+                                    } else {
+                                        viewModel.selectCategory(category) 
+                                    }
+                                },
                                 onLongClick = { viewModel.requestDeleteGroup(category) }
                             )
                         }
@@ -619,16 +685,26 @@ fun HomeScreen(
                                     items = uiState.filteredChannels,
                                     key = { it.id }
                                 ) { channel ->
+                                    val isLocked = channel.isAdult && uiState.parentalControlLevel == 1
+                                    
                                     ChannelCard(
                                         channel = channel,
+                                        isLocked = isLocked,
                                         onClick = { 
                                             if (ignoreNextClick) {
                                                 ignoreNextClick = false
                                             } else if (!uiState.showDialog) {
-                                                onChannelClick(channel, uiState.selectedCategory, uiState.provider) 
+                                                if (isLocked) {
+                                                    pendingUnlockChannel = channel
+                                                    showPinDialog = true
+                                                } else {
+                                                    onChannelClick(channel, uiState.selectedCategory, uiState.provider)
+                                                }
                                             }
                                         },
                                         onLongClick = {
+                                            // Allow long click even if locked? Maybe restricts context menu?
+                                            // For now, allow it (e.g. to delete from favorites/groups)
                                             ignoreNextClick = true
                                             viewModel.onShowDialog(channel)
                                         },
@@ -712,6 +788,7 @@ fun HomeScreen(
 private fun CategoryItem(
     category: Category,
     isSelected: Boolean,
+    isLocked: Boolean = false,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
@@ -737,13 +814,27 @@ private fun CategoryItem(
             )
         )
     ) {
-        Text(
-            text = "${category.name} (${category.count})",
-            style = if (isSelected) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+        Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            maxLines = 1,
-            color = if (isFocused) OnBackground else if (isSelected) Primary else OnSurface
-        )
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "${category.name} (${category.count})",
+                style = if (isSelected) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                color = if (isFocused) OnBackground else if (isSelected) Primary else OnSurface,
+                modifier = Modifier.weight(1f)
+            )
+            
+            if (isLocked) {
+                Text(
+                    text = "🔒",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+        }
     }
 }
 

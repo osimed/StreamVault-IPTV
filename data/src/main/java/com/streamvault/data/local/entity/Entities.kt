@@ -49,7 +49,8 @@ data class ChannelEntity(
     val number: Int = 0,
     @ColumnInfo(name = "catch_up_supported") val catchUpSupported: Boolean = false,
     @ColumnInfo(name = "catch_up_days") val catchUpDays: Int = 0,
-    @ColumnInfo(name = "provider_id") val providerId: Long = 0
+    @ColumnInfo(name = "provider_id") val providerId: Long = 0,
+    @ColumnInfo(name = "is_adult") val isAdult: Boolean = false
 )
 
 @Entity(
@@ -160,7 +161,8 @@ data class CategoryEntity(
     val name: String,
     @ColumnInfo(name = "parent_id") val parentId: Long? = null,
     val type: String = "LIVE", // LIVE, MOVIE, SERIES
-    @ColumnInfo(name = "provider_id") val providerId: Long = 0
+    @ColumnInfo(name = "provider_id") val providerId: Long = 0,
+    @ColumnInfo(name = "is_adult") val isAdult: Boolean = false
 )
 
 @Entity(

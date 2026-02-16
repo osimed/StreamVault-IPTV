@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -23,6 +24,8 @@ class PreferencesRepository @Inject constructor(
     private object PreferencesKeys {
         val LAST_ACTIVE_PROVIDER_ID = longPreferencesKey("last_active_provider_id")
         val DEFAULT_VIEW_MODE = stringPreferencesKey("default_view_mode")
+        val PARENTAL_CONTROL_LEVEL = intPreferencesKey("parental_control_level")
+        val PARENTAL_PIN = stringPreferencesKey("parental_pin")
     }
 
     val lastActiveProviderId: Flow<Long?> = context.dataStore.data.map { preferences ->
@@ -33,9 +36,19 @@ class PreferencesRepository @Inject constructor(
         preferences[PreferencesKeys.DEFAULT_VIEW_MODE]
     }
 
-    suspend fun setLastActiveProviderId(providerId: Long) {
+    val parentalControlLevel: Flow<Int> = context.dataStore.data
+        .map { preferences ->
+            preferences[PreferencesKeys.PARENTAL_CONTROL_LEVEL] ?: 0 // 0 = OFF, 1 = LOCKED, 2 = HIDDEN
+        }
+
+    val parentalPin: Flow<String> = context.dataStore.data
+        .map { preferences ->
+            preferences[PreferencesKeys.PARENTAL_PIN] ?: "0000"
+        }
+
+    suspend fun setLastActiveProviderId(id: Long) {
         context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.LAST_ACTIVE_PROVIDER_ID] = providerId
+            preferences[PreferencesKeys.LAST_ACTIVE_PROVIDER_ID] = id
         }
     }
 
@@ -45,9 +58,20 @@ class PreferencesRepository @Inject constructor(
         }
     }
 
+    suspend fun setParentalControlLevel(level: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.PARENTAL_CONTROL_LEVEL] = level
+        }
+    }
+
+    suspend fun setParentalPin(pin: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.PARENTAL_PIN] = pin
+        }
+    }
+
     suspend fun clearDefaultViewMode() {
         context.dataStore.edit { preferences ->
-            preferences.remove(PreferencesKeys.DEFAULT_VIEW_MODE)
         }
     }
 }

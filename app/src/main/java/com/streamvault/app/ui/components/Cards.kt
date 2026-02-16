@@ -86,7 +86,8 @@ fun ChannelCard(
     channel: Channel,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)? = null,
+    isLocked: Boolean = false
 ) {
     FocusableCard(
         onClick = onClick,
@@ -105,7 +106,7 @@ fun ChannelCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
-                if (!channel.logoUrl.isNullOrBlank()) {
+                if (!channel.logoUrl.isNullOrBlank() && !isLocked) {
                     AsyncImage(
                         model = channel.logoUrl,
                         contentDescription = channel.name,
@@ -117,7 +118,7 @@ fun ChannelCard(
                 }
                 
                 Text(
-                    text = channel.name,
+                    text = if (isLocked) "Locked Channel" else channel.name,
                     style = MaterialTheme.typography.bodySmall,
                     color = if (isFocused) OnBackground else OnSurface,
                     maxLines = 2,
@@ -125,41 +126,57 @@ fun ChannelCard(
                 )
             }
 
-            // Bottom section: Current Program
-            channel.currentProgram?.let { program ->
-                Spacer(modifier = Modifier.height(4.dp))
-                
-                Text(
-                    text = program.title,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isFocused) OnBackground.copy(alpha = 0.8f) else OnSurfaceDim,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                
-                // Progress Bar
-                val now = System.currentTimeMillis()
-                val totalDuration = program.endTime - program.startTime
-                val elapsed = now - program.startTime
-                val progress = if (totalDuration > 0) elapsed.toFloat() / totalDuration else 0f
-                
-                Spacer(modifier = Modifier.height(4.dp))
-                LinearProgressIndicator(
-                    progress = { progress.coerceIn(0f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(2.dp),
-                    color = if (isFocused) Primary else OnSurfaceDim,
-                    trackColor = SurfaceHighlight
-                )
+            // Bottom section: Current Program (Hide if locked)
+            if (!isLocked) {
+                channel.currentProgram?.let { program ->
+                    Spacer(modifier = Modifier.height(4.dp))
+                    
+                    Text(
+                        text = program.title,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isFocused) OnBackground.copy(alpha = 0.8f) else OnSurfaceDim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    
+                    // Progress Bar
+                    val now = System.currentTimeMillis()
+                    val totalDuration = program.endTime - program.startTime
+                    val elapsed = now - program.startTime
+                    val progress = if (totalDuration > 0) elapsed.toFloat() / totalDuration else 0f
+                    
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.dp),
+                        color = if (isFocused) Primary else OnSurfaceDim,
+                        trackColor = SurfaceHighlight
+                    )
+                }
             }
         }
             
-        // Live indicator
-        Box(
-            modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(4.dp)
+        // Lock Overlay
+        if (isLocked) {
+             Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "🔒",
+                    style = MaterialTheme.typography.displayMedium
+                )
+            }
+        }
+
+        // Live indicator (Hide if locked)
+        if (!isLocked) {
+            Box(
+                modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (channel.isFavorite) {
@@ -191,10 +208,12 @@ fun ChannelCard(
                             color = Color.White
                         )
                     }
+                    }
                 }
+            }
         }
     }
-}
+
 
 // ── Movie Card ─────────────────────────────────────────────────────
 

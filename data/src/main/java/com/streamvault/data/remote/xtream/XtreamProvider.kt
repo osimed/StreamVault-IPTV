@@ -266,27 +266,41 @@ class XtreamProvider(
     }
 
     // ── Mappers ────────────────────────────────────────────────────
+    
+    private fun isAdultContent(name: String?): Boolean {
+        if (name == null) return false
+        val keywords = listOf("XXX", "Adult", "Porn", "Erotic", "18+")
+        return keywords.any { name.contains(it, ignoreCase = true) }
+    }
 
     private fun XtreamCategory.toDomain(type: ContentType) = Category(
         id = categoryId.toLongOrNull() ?: 0,
         name = categoryName,
         parentId = if (parentId > 0) parentId.toLong() else null,
-        type = type
+        type = type,
+        isAdult = isAdultContent(categoryName)
     )
 
-    private fun XtreamStream.toChannel() = Channel(
-        id = streamId,
-        name = name,
-        logoUrl = streamIcon,
-        categoryId = categoryId?.toLongOrNull(),
-        categoryName = categoryName,
-        epgChannelId = epgChannelId,
-        number = num,
-        catchUpSupported = tvArchive == 1,
-        catchUpDays = tvArchiveDuration ?: 0,
-        providerId = providerId,
-        streamUrl = "$serverUrl/live/$username/$password/$streamId.ts"
-    )
+    private fun XtreamStream.toChannel(): Channel {
+        val isCatAdult = isAdultContent(categoryName)
+        // Check group title as fallback if available, though usually categoryName is the group
+        val isGroupAdult = false 
+        
+        return Channel(
+            id = streamId,
+            name = name,
+            logoUrl = streamIcon,
+            categoryId = categoryId?.toLongOrNull(),
+            categoryName = categoryName,
+            epgChannelId = epgChannelId,
+            number = num,
+            catchUpSupported = tvArchive == 1,
+            catchUpDays = tvArchiveDuration ?: 0,
+            providerId = providerId,
+            streamUrl = "$serverUrl/live/$username/$password/$streamId.ts",
+            isAdult = isCatAdult
+        )
+    }
 
     private fun XtreamStream.toMovie() = Movie(
         id = streamId,

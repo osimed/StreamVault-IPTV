@@ -17,8 +17,8 @@ import com.streamvault.data.local.entity.*
         FavoriteEntity::class,
         VirtualGroupEntity::class
     ],
-    version = 1,
-    exportSchema = true
+    version = 2,
+    exportSchema = false
 )
 abstract class StreamVaultDatabase : RoomDatabase() {
     abstract fun providerDao(): ProviderDao

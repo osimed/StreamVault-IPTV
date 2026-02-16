@@ -13,22 +13,48 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
+import com.streamvault.data.preferences.PreferencesRepository
 import javax.inject.Singleton
 
 @Singleton
 class ChannelRepositoryImpl @Inject constructor(
     private val channelDao: ChannelDao,
-    private val categoryDao: CategoryDao
+    private val categoryDao: CategoryDao,
+    private val preferencesRepository: PreferencesRepository
 ) : ChannelRepository {
 
     override fun getChannels(providerId: Long): Flow<List<Channel>> =
-        channelDao.getByProvider(providerId).map { entities -> entities.map { it.toDomain() } }
+        combine(
+            channelDao.getByProvider(providerId),
+            preferencesRepository.parentalControlLevel
+        ) { entities, level ->
+            // Level 2 = HIDDEN. If hidden, filter out adult channels.
+            if (level == 2) {
+                entities.filter { !it.isAdult }
+            } else {
+                entities
+            }
+        }.map { entities ->
+            entities.map { it.toDomain() }
+        }
 
     override fun getChannelsByCategory(providerId: Long, categoryId: Long): Flow<List<Channel>> =
-        if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
-            channelDao.getByProvider(providerId).map { entities -> entities.map { it.toDomain() } }
-        } else {
-            channelDao.getByCategory(providerId, categoryId).map { entities -> entities.map { it.toDomain() } }
+        combine(
+            if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
+                channelDao.getByProvider(providerId)
+            } else {
+                channelDao.getByCategory(providerId, categoryId)
+            },
+            preferencesRepository.parentalControlLevel
+        ) { entities, level ->
+            // Level 2 = HIDDEN. If hidden, filter out adult channels.
+            if (level == 2) {
+                entities.filter { !it.isAdult }
+            } else {
+                entities
+            }
+        }.map { entities ->
+            entities.map { it.toDomain() }
         }
 
     override fun getCategories(providerId: Long): Flow<List<Category>> =
