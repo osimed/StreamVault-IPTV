@@ -13,6 +13,8 @@ import com.streamvault.app.ui.screens.player.PlayerScreen
 import com.streamvault.app.ui.screens.provider.ProviderSetupScreen
 import com.streamvault.app.ui.screens.series.SeriesScreen
 import com.streamvault.app.ui.screens.settings.SettingsScreen
+import com.streamvault.app.ui.screens.welcome.WelcomeScreen
+
 
 object Routes {
     const val PROVIDER_SETUP = "provider_setup?providerId={providerId}"
@@ -24,12 +26,25 @@ object Routes {
     const val PLAYER = "player/{streamUrl}?title={title}&channelId={channelId}&internalId={internalId}&categoryId={categoryId}&providerId={providerId}&isVirtual={isVirtual}"
     const val SEARCH = "search"
     const val SERIES_DETAIL = "series_detail/{seriesId}"
+    const val WELCOME = "welcome"
+
 
     fun providerSetup(providerId: Long? = null) = "provider_setup?providerId=${providerId ?: -1L}"
 
-    fun player(streamUrl: String, title: String = "", channelId: String? = null, internalId: Long = -1L, categoryId: Long? = null, providerId: Long? = null, isVirtual: Boolean = false) =
-        "player/${java.net.URLEncoder.encode(streamUrl, "UTF-8")}?title=${java.net.URLEncoder.encode(title, "UTF-8")}&channelId=${channelId ?: ""}&internalId=$internalId&categoryId=${categoryId ?: -1}&providerId=${providerId ?: -1}&isVirtual=$isVirtual"
-        
+    fun player(
+        streamUrl: String, 
+        title: String, 
+        channelId: String? = null,
+        internalId: Long = -1L,
+        categoryId: Long? = null,
+        providerId: Long? = null,
+        isVirtual: Boolean = false
+    ): String {
+        val encodedUrl = java.net.URLEncoder.encode(streamUrl, "UTF-8")
+        val encodedTitle = java.net.URLEncoder.encode(title, "UTF-8")
+        return "player/$encodedUrl?title=$encodedTitle&channelId=${channelId ?: ""}&internalId=$internalId&categoryId=${categoryId ?: -1L}&providerId=${providerId ?: -1L}&isVirtual=$isVirtual"
+    }
+
     fun seriesDetail(seriesId: Long) = "series_detail/$seriesId"
 }
 
@@ -39,8 +54,23 @@ fun AppNavigation() {
 
     NavHost(
         navController = navController,
-        startDestination = Routes.PROVIDER_SETUP
+        startDestination = Routes.WELCOME
     ) {
+        composable(Routes.WELCOME) {
+            WelcomeScreen(
+                onNavigateToHome = {
+                    navController.navigate(Routes.HOME) {
+                        popUpTo(Routes.WELCOME) { inclusive = true }
+                    }
+                },
+                onNavigateToSetup = {
+                    navController.navigate(Routes.PROVIDER_SETUP) {
+                        popUpTo(Routes.WELCOME) { inclusive = true }
+                    }
+                }
+            )
+        }
+
         composable(
             route = Routes.PROVIDER_SETUP,
             arguments = listOf(
@@ -58,6 +88,7 @@ fun AppNavigation() {
                 }
             )
         }
+// ...
 
         composable(Routes.HOME) {
             HomeScreen(

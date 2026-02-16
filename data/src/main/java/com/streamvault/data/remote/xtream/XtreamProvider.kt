@@ -26,7 +26,38 @@ class XtreamProvider(
         if (response.userInfo.auth != 1) {
             Result.error("Authentication failed: ${response.userInfo.message}")
         } else {
-            val expDate = response.userInfo.expDate?.toLongOrNull()?.let { it * 1000 }
+            // Parse expiration date
+            val expDateStr = response.userInfo.expDate
+            val expDate = when {
+                expDateStr == null -> null
+                expDateStr.equals("Unlimited", ignoreCase = true) -> Long.MAX_VALUE
+                expDateStr.equals("null", ignoreCase = true) -> null
+                // Try as timestamp (seconds)
+                expDateStr.toLongOrNull() != null -> expDateStr.toLong() * 1000
+                // Try as Date String (yyyy-MM-dd, etc.) - simple fallback
+                else -> {
+                    try {
+                        // formats: yyyy-MM-dd HH:mm:ss, yyyy-MM-dd, etc.
+                        // For now, let's try a few common patterns or just use a generic parser if available.
+                        // Since we don't have a heavy date library, let's try basic java.text.SimpleDateFormat
+                        val formats = listOf(
+                            "yyyy-MM-dd HH:mm:ss",
+                            "yyyy-MM-dd"
+                        )
+                        var parsed: Long? = null
+                        for (fmt in formats) {
+                            try {
+                                parsed = java.text.SimpleDateFormat(fmt, java.util.Locale.getDefault()).parse(expDateStr)?.time
+                                if (parsed != null) break
+                            } catch (_: Exception) {}
+                        }
+                        parsed
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }
+
             Result.success(
                 Provider(
                     id = providerId,

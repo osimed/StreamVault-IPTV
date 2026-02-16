@@ -470,17 +470,7 @@ fun HomeScreen(
                     modifier = Modifier.weight(1f)
                 )
                 
-                // Playlist Switcher
-                if (uiState.allProviders.size > 1) {
-                    com.streamvault.app.ui.components.PlaylistSwitcher(
-                        currentProvider = uiState.provider,
-                        allProviders = uiState.allProviders,
-                        onProviderSelected = { provider ->
-                            viewModel.switchProvider(provider.id)
-                        },
-                        modifier = Modifier.padding(end = 32.dp)
-                    )
-                }
+                // Playlist Switcher - REMOVED (Moved to Settings)
             }
 
             if (uiState.isLoading && uiState.categories.isEmpty()) {

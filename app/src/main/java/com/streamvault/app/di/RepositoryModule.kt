@@ -40,13 +40,7 @@ abstract class RepositoryModule {
     abstract fun bindPlayerEngine(impl: Media3PlayerEngine): PlayerEngine
 
     companion object {
-        @Provides
-        @Singleton
-        fun providePreferencesRepository(
-            @ApplicationContext context: Context
-        ): PreferencesRepository {
-            return PreferencesRepository(context)
-        }
+        // PreferencesRepository is provided by @Inject constructor
 
         @Provides
         @Singleton

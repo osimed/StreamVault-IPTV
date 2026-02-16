@@ -1,6 +1,7 @@
 package com.streamvault.app.ui.screens.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,10 +27,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.streamvault.data.preferences.PreferencesRepository
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val providerRepository: ProviderRepository
+    private val providerRepository: ProviderRepository,
+    private val preferencesRepository: PreferencesRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -37,9 +40,28 @@ class SettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            providerRepository.getProviders().collect { providers ->
-                _uiState.update { it.copy(providers = providers) }
+            combine(
+                providerRepository.getProviders(),
+                preferencesRepository.lastActiveProviderId
+            ) { providers, activeId ->
+                Pair(providers, activeId)
+            }.collect { (providers, activeId) ->
+                _uiState.update {
+                    it.copy(
+                        providers = providers,
+                        activeProviderId = activeId
+                    )
+                }
             }
+        }
+    }
+
+    fun setActiveProvider(providerId: Long) {
+        viewModelScope.launch {
+            preferencesRepository.setLastActiveProviderId(providerId)
+            providerRepository.setActiveProvider(providerId)
+             // Force sync on connect
+             refreshProvider(providerId)
         }
     }
 
@@ -71,6 +93,7 @@ class SettingsViewModel @Inject constructor(
 
 data class SettingsUiState(
     val providers: List<Provider> = emptyList(),
+    val activeProviderId: Long? = null,
     val isSyncing: Boolean = false,
     val userMessage: String? = null
 )
@@ -140,7 +163,9 @@ fun SettingsScreen(
                     val provider = uiState.providers[index]
                     ProviderSettingsCard(
                         provider = provider,
+                        isActive = provider.id == uiState.activeProviderId,
                         isSyncing = uiState.isSyncing,
+                        onConnect = { viewModel.setActiveProvider(provider.id) },
                         onRefresh = { viewModel.refreshProvider(provider.id) },
                         onDelete = { viewModel.deleteProvider(provider.id) },
                         onEdit = { onEditProvider(provider) }
@@ -246,7 +271,9 @@ fun SettingsScreen(
 @Composable
 private fun ProviderSettingsCard(
     provider: Provider,
+    isActive: Boolean,
     isSyncing: Boolean,
+    onConnect: () -> Unit,
     onRefresh: () -> Unit,
     onDelete: () -> Unit,
     onEdit: () -> Unit) {
@@ -255,40 +282,98 @@ private fun ProviderSettingsCard(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                color = SurfaceElevated,
+                color = if (isActive) SurfaceHighlight else SurfaceElevated,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .border(
+                width = if (isActive) 2.dp else 0.dp,
+                color = if (isActive) Primary else Color.Transparent,
                 shape = RoundedCornerShape(8.dp)
             )
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Provider info
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = provider.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = OnBackground
+                )
+                Text(
+                    text = "${provider.type.name} • ${provider.status.name}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurface
+                )
+            }
+            if (isActive) {
+                Text(
+                    text = "ACTIVE",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Primary,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    modifier = Modifier
+                        .background(Primary.copy(alpha = 0.1f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        // Expiration Date
+        val expDate = provider.expirationDate
+        val expirationText = remember(expDate) {
+            when (expDate) {
+                null -> "Expiration: Unknown"
+                Long.MAX_VALUE -> "Expiration: Never"
+                else -> "Expires: " + java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(expDate))
+            }
+        }
         Text(
-            text = provider.name,
-            style = MaterialTheme.typography.bodyLarge,
-            color = OnBackground
-        )
-        Text(
-            text = "${provider.type.name} • ${provider.status.name}",
+            text = expirationText,
             style = MaterialTheme.typography.bodySmall,
-            color = OnSurface
+            color = if (expDate != null && expDate < System.currentTimeMillis() && expDate != Long.MAX_VALUE) ErrorColor else OnSurfaceDim
         )
 
         // Action buttons - each independently focusable for d-pad
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(
-                onClick = onRefresh,
-                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = Primary.copy(alpha = 0.2f),
-                    focusedContainerColor = Primary.copy(alpha = 0.5f)
-                )
-            ) {
-                Text(
-                    text = if (isSyncing) "⟳ Syncing..." else "⟳ Refresh",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Primary,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-                )
+            if (!isActive) {
+                Surface(
+                    onClick = onConnect,
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Primary,
+                        focusedContainerColor = Primary.copy(alpha = 0.8f),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(
+                        text = "⚡ Connect",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
+            } else {
+                Surface(
+                    onClick = onRefresh,
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Primary.copy(alpha = 0.2f),
+                        focusedContainerColor = Primary.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Text(
+                        text = if (isSyncing) "⟳ Syncing..." else "⟳ Sync",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Primary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
             }
 
             Surface(

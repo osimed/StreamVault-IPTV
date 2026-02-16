@@ -25,6 +25,9 @@ import com.streamvault.domain.model.Category
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import kotlinx.coroutines.delay
 
 @Composable
@@ -90,7 +93,18 @@ fun AddToGroupDialog(
                         value = newGroupName,
                         onValueChange = { newGroupName = it },
                         label = { Text("Group Name") },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (newGroupName.isNotBlank()) {
+                                    onCreateGroup(newGroupName)
+                                    showCreateGroup = false
+                                    newGroupName = ""
+                                }
+                            }
+                        )
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 16.dp),

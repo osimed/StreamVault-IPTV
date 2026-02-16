@@ -13,6 +13,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
@@ -44,9 +47,15 @@ class PlayerViewModel @Inject constructor(
 
     private val _showControls = MutableStateFlow(true)
     val showControls: StateFlow<Boolean> = _showControls.asStateFlow()
+
+    private val _showZapOverlay = MutableStateFlow(false)
+    val showZapOverlay: StateFlow<Boolean> = _showZapOverlay.asStateFlow()
     
     private val _currentProgram = MutableStateFlow<Program?>(null)
     val currentProgram: StateFlow<Program?> = _currentProgram.asStateFlow()
+
+    private val _currentChannel = MutableStateFlow<com.streamvault.domain.model.Channel?>(null)
+    val currentChannel: StateFlow<com.streamvault.domain.model.Channel?> = _currentChannel.asStateFlow()
     
     // Zapping state
     private var channelList: List<com.streamvault.domain.model.Channel> = emptyList()
@@ -58,6 +67,7 @@ class PlayerViewModel @Inject constructor(
     private var epgJob: kotlinx.coroutines.Job? = null
     private var playlistJob: kotlinx.coroutines.Job? = null
     private var hideControlsJob: kotlinx.coroutines.Job? = null
+    private var hideZapOverlayJob: kotlinx.coroutines.Job? = null
     
     val playerError: StateFlow<PlayerError?> = playerEngine.error
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), null)
@@ -150,6 +160,10 @@ class PlayerViewModel @Inject constructor(
                 if (currentChannelIndex == -1) {
                     currentChannelIndex = channelList.indexOfFirst { it.streamUrl == currentStreamUrl }
                 }
+                
+                if (currentChannelIndex != -1) {
+                    _currentChannel.value = channelList[currentChannelIndex]
+                }
             }
         }
     }
@@ -184,6 +198,7 @@ class PlayerViewModel @Inject constructor(
     private fun changeChannel(index: Int) {
         val channel = channelList[index]
         currentChannelIndex = index
+        _currentChannel.value = channel
         
         // Prepare player
         val streamInfo = StreamInfo(
@@ -194,6 +209,11 @@ class PlayerViewModel @Inject constructor(
         playerEngine.play()
         
         fetchEpg(channel.epgChannelId)
+        
+        // Show Zap Overlay
+        _showZapOverlay.value = true
+        _showControls.value = false // Hide full controls
+        hideZapOverlayAfterDelay()
     }
 
     fun play() = playerEngine.play()
@@ -213,6 +233,14 @@ class PlayerViewModel @Inject constructor(
             _showControls.value = false
         }
     }
+
+    private fun hideZapOverlayAfterDelay() {
+        hideZapOverlayJob?.cancel()
+        hideZapOverlayJob = viewModelScope.launch {
+            delay(4000)
+            _showZapOverlay.value = false
+        }
+    }
     
     fun retryStream(streamUrl: String, epgChannelId: String?) {
         val currentId = if (currentChannelIndex != -1 && channelList.isNotEmpty()) channelList[currentChannelIndex].id else -1L
@@ -222,6 +250,7 @@ class PlayerViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         hideControlsJob?.cancel()
+        hideZapOverlayJob?.cancel()
         playerEngine.release()
     }
 }
@@ -245,6 +274,14 @@ fun PlayerScreen(
     val videoFormat by viewModel.videoFormat.collectAsState()
     val playerError by viewModel.playerError.collectAsState()
     val currentProgram by viewModel.currentProgram.collectAsState()
+    val currentChannel by viewModel.currentChannel.collectAsState()
+    val showZapOverlay by viewModel.showZapOverlay.collectAsState()
+    
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
     
     // Show resolution overlay temporarily when it changes
     var showResolution by remember { mutableStateOf(false) }
@@ -269,6 +306,8 @@ fun PlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .focusRequester(focusRequester)
+            .focusable()
             .onKeyEvent { event ->
                 // Only handle KeyDown to avoid double actions
                 if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
@@ -509,6 +548,34 @@ fun PlayerScreen(
             }
         }
         
+        // Zap Overlay (Bottom Left)
+        if (showZapOverlay && !showControls && currentChannel != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(32.dp)
+                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                    .padding(16.dp)
+                    .widthIn(max = 400.dp)
+            ) {
+                 Column {
+                     Text(
+                        text = "${currentChannel?.number}. ${currentChannel?.name}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    if (currentProgram != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                         Text(
+                            text = currentProgram?.title ?: "",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha=0.8f)
+                        )
+                    }
+                 }
+            }
+        }
+
         // Resolution Overlay (Top Right)
         if (showResolution && !showControls && !videoFormat.isEmpty) {
             Box(
