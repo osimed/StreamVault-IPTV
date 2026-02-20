@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.*
 import com.streamvault.app.ui.components.CategoryRow
+import com.streamvault.app.ui.components.ContinueWatchingRow
 import com.streamvault.app.ui.components.MovieCard
 import com.streamvault.app.ui.components.TopNavBar
 import com.streamvault.app.ui.theme.*
@@ -72,6 +73,21 @@ fun MoviesScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 32.dp)
             ) {
+                // Continue Watching row (shown first, only if non-empty)
+                item(key = "continue_watching") {
+                    ContinueWatchingRow(
+                        items = uiState.continueWatching,
+                        onItemClick = { history -> onMovieClick(
+                            com.streamvault.domain.model.Movie(
+                                id = history.contentId,
+                                name = history.title,
+                                posterUrl = history.posterUrl,
+                                streamUrl = history.streamUrl,
+                                providerId = history.providerId
+                            )
+                        )}
+                    )
+                }
                 items(
                     items = uiState.moviesByCategory.entries.toList(),
                     key = { it.key }

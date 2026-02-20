@@ -1,27 +1,32 @@
 package com.streamvault.app.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.border
-import androidx.compose.foundation.background
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.tv.material3.*
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
+import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.streamvault.app.ui.theme.*
 import com.streamvault.domain.model.Channel
@@ -42,12 +47,15 @@ fun FocusableCard(
     var isFocused by remember { mutableStateOf(false) }
 
     val scale by animateFloatAsState(
-        targetValue = if (isFocused) 1.06f else 1f,
-        animationSpec = tween(durationMillis = 180),
+        targetValue = if (isFocused) 1.08f else 1f,
+        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
         label = "cardScale"
     )
-
-    val borderColor = if (isFocused) FocusBorder else Color.Transparent
+    val shadowElevation by animateFloatAsState(
+        targetValue = if (isFocused) 24f else 0f,
+        animationSpec = tween(200, easing = FastOutSlowInEasing),
+        label = "cardShadow"
+    )
 
     Surface(
         onClick = onClick,
@@ -55,21 +63,25 @@ fun FocusableCard(
         modifier = modifier
             .width(width)
             .height(height)
-            .scale(scale)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                this.shadowElevation = shadowElevation
+            }
             .onFocusChanged { isFocused = it.isFocused },
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = CardBackground,
-            focusedContainerColor = CardBackground
+            focusedContainerColor = SurfaceHighlight
         ),
         border = ClickableSurfaceDefaults.border(
             border = Border(
-                border = BorderStroke(2.dp, borderColor),
-                shape = RoundedCornerShape(8.dp)
+                border = BorderStroke(0.dp, Color.Transparent),
+                shape = RoundedCornerShape(10.dp)
             ),
             focusedBorder = Border(
-                border = BorderStroke(2.dp, FocusBorder),
-                shape = RoundedCornerShape(8.dp)
+                border = BorderStroke(2.dp, Primary),
+                shape = RoundedCornerShape(10.dp)
             )
         )
     ) {
@@ -79,7 +91,7 @@ fun FocusableCard(
     }
 }
 
-// ── Channel Card ───────────────────────────────────────────────────
+// ── Channel Card (16:9 landscape tile) ────────────────────────────
 
 @Composable
 fun ChannelCard(
@@ -93,129 +105,109 @@ fun ChannelCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier,
-        width = 200.dp,
-        height = 140.dp
+        width = 280.dp,
+        height = 157.dp
     ) { isFocused ->
+        // Background: logo or solid surface
+        if (!channel.logoUrl.isNullOrBlank() && !isLocked) {
+            AsyncImage(
+                model = channel.logoUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(10.dp)),
+                contentScale = ContentScale.Fit
+            )
+        }
+
+        // Bottom gradient overlay
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(0.55f)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, GradientOverlayBottom)
+                    )
+                )
+        )
+
+        // Bottom content: channel name + EPG + progress
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(LocalSpacing.current.sm)
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            // Top section: Logo and Name
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                if (!channel.logoUrl.isNullOrBlank() && !isLocked) {
-                    AsyncImage(
-                        model = channel.logoUrl,
-                        contentDescription = channel.name,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .padding(end = 8.dp),
-                        contentScale = ContentScale.Fit
-                    )
-                }
-                
-                Text(
-                    text = if (isLocked) "Locked Channel" else channel.name,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (isFocused) OnBackground else OnSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                text = if (isLocked) "Locked Channel" else channel.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (isFocused) TextPrimary else TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
 
-            // Bottom section: Current Program (Hide if locked)
             if (!isLocked) {
                 channel.currentProgram?.let { program ->
-                    Spacer(modifier = Modifier.height(4.dp))
-                    
                     Text(
                         text = program.title,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isFocused) OnBackground.copy(alpha = 0.8f) else OnSurfaceDim,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = TextTertiary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    
-                    // Progress Bar
                     val now = System.currentTimeMillis()
                     val totalDuration = program.endTime - program.startTime
                     val elapsed = now - program.startTime
                     val progress = if (totalDuration > 0) elapsed.toFloat() / totalDuration else 0f
-                    
-                    Spacer(modifier = Modifier.height(4.dp))
                     LinearProgressIndicator(
                         progress = { progress.coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(2.dp),
-                        color = if (isFocused) Primary else OnSurfaceDim,
+                        modifier = Modifier.fillMaxWidth().height(2.dp).clip(RoundedCornerShape(1.dp)),
+                        color = AccentCyan,
                         trackColor = SurfaceHighlight
                     )
                 }
             }
         }
-            
-        // Lock Overlay
-        if (isLocked) {
-             Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "🔒",
-                    style = MaterialTheme.typography.displayMedium
-                )
-            }
-        }
 
-        // Live indicator (Hide if locked)
+        // Top-right badges
         if (!isLocked) {
-            Box(
-                modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
+            Row(
+                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (channel.isFavorite) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .padding(end = 4.dp)
-                                .background(Color.Yellow, androidx.compose.foundation.shape.CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "★",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                color = Color.Black
-                            )
-                        }
-                    }
-
+                if (channel.isFavorite) {
                     Box(
                         modifier = Modifier
-                            .size(width = 32.dp, height = 14.dp)
-                            .background(LiveIndicator, RoundedCornerShape(4.dp)),
-                        contentAlignment = Alignment.Center
+                            .background(AccentAmber, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) {
-                        Text(
-                            text = "LIVE",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White
-                        )
+                        Text("★", style = MaterialTheme.typography.labelSmall, color = Color.Black)
                     }
-                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .background(AccentRed, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text("LIVE", style = MaterialTheme.typography.labelSmall, color = Color.White)
                 }
             }
         }
+
+        // Lock overlay
+        if (isLocked) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("🔒", style = MaterialTheme.typography.displayMedium)
+            }
+        }
     }
+}
 
-
-// ── Movie Card ─────────────────────────────────────────────────────
+// ── Movie Card (2:3 poster) ────────────────────────────────────────
 
 @Composable
 fun MovieCard(
@@ -223,82 +215,113 @@ fun MovieCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
-    isLocked: Boolean = false
+    isLocked: Boolean = false,
+    watchProgress: Float = 0f   // 0..1 from playback history
 ) {
     FocusableCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier,
-        width = 160.dp,
-        height = 240.dp
+        width = 150.dp,
+        height = 225.dp
     ) { isFocused ->
+        // Poster image
         if (!movie.posterUrl.isNullOrBlank() && !isLocked) {
             AsyncImage(
                 model = movie.posterUrl,
                 contentDescription = movie.name,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
                 contentScale = ContentScale.Crop
             )
+        } else {
+            Box(
+                modifier = Modifier.fillMaxSize().background(SurfaceElevated),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (isLocked) "🔒" else "🎬",
+                    style = MaterialTheme.typography.headlineLarge
+                )
+            }
         }
 
-        // Title overlay at bottom
+        // Bottom gradient overlay
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(LocalSpacing.current.sm)
+                .fillMaxHeight(0.5f)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, GradientOverlayBottom),
+                    )
+                )
+        )
+
+        // Title + metadata at bottom
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
-                text = if (isLocked) "Locked Movie" else movie.name,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (isFocused) OnBackground else OnSurface,
+                text = if (isLocked) "Locked" else movie.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = TextPrimary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+            if (!isLocked && movie.year != null) {
+                val year = movie.year
+                val genre = movie.genre
+                Text(
+                    text = buildString {
+                        append(year)
+                        if (!genre.isNullOrBlank()) append(" · ${genre.take(20)}")
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = TextTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
 
-        // Rating badge
+        // Watch progress bar at very bottom edge
+        if (watchProgress > 0f && !isLocked) {
+            LinearProgressIndicator(
+                progress = { watchProgress.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(3.dp),
+                color = AccentCyan,
+                trackColor = Color.Transparent
+            )
+        }
+
+        // Rating badge top-right
         if (movie.rating > 0f && !isLocked) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(4.dp)
-            ) {
-                Surface(
-                    onClick = {},
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
-                    colors = ClickableSurfaceDefaults.colors(
-                        containerColor = Primary.copy(alpha = 0.85f),
-                        focusedContainerColor = Primary.copy(alpha = 0.85f)
-                    ),
-                    modifier = Modifier.padding(2.dp)
-                ) {
-                    Text(
-                        text = String.format("%.1f", movie.rating),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
-            }
-        }
-
-        // Lock Overlay
-        if (isLocked) {
-             Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
+                    .padding(6.dp)
+                    .background(PrimaryGlow, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
                 Text(
-                    text = "🔒",
-                    style = MaterialTheme.typography.displayMedium
+                    text = String.format("%.1f", movie.rating),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White
                 )
             }
         }
     }
 }
 
-// ── Series Card ────────────────────────────────────────────────────
+// ── Series Card (2:3 poster) ───────────────────────────────────────
 
 @Composable
 fun SeriesCard(
@@ -306,50 +329,90 @@ fun SeriesCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
-    isLocked: Boolean = false
+    isLocked: Boolean = false,
+    watchProgress: Float = 0f,
+    subtitle: String? = null   // e.g. "12 episodes" — caller provides to avoid type collision
 ) {
+    val posterUrl = series.posterUrl
+    val seriesName = series.name
+
     FocusableCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier,
-        width = 160.dp,
-        height = 240.dp
+        width = 150.dp,
+        height = 225.dp
     ) { isFocused ->
-        if (!series.posterUrl.isNullOrBlank() && !isLocked) {
+        // Poster image
+        if (!posterUrl.isNullOrBlank() && !isLocked) {
             AsyncImage(
-                model = series.posterUrl,
-                contentDescription = series.name,
-                modifier = Modifier.fillMaxSize(),
+                model = posterUrl,
+                contentDescription = seriesName,
+                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
                 contentScale = ContentScale.Crop
             )
+        } else {
+            Box(
+                modifier = Modifier.fillMaxSize().background(SurfaceElevated),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (isLocked) "🔒" else "📺",
+                    style = MaterialTheme.typography.headlineLarge
+                )
+            }
         }
 
+        // Bottom gradient overlay
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(LocalSpacing.current.sm)
+                .fillMaxHeight(0.5f)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, GradientOverlayBottom)
+                    )
+                )
+        )
+
+        // Title at bottom
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
-                text = if (isLocked) "Locked Series" else series.name,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (isFocused) OnBackground else OnSurface,
+                text = if (isLocked) "Locked" else seriesName,
+                style = MaterialTheme.typography.titleSmall,
+                color = TextPrimary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-        }
-
-        // Lock Overlay
-        if (isLocked) {
-             Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
+            if (!isLocked && !subtitle.isNullOrBlank()) {
                 Text(
-                    text = "🔒",
-                    style = MaterialTheme.typography.displayMedium
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = TextTertiary,
+                    maxLines = 1
                 )
             }
         }
+
+        // Watch progress bar at very bottom edge
+        if (watchProgress > 0f && !isLocked) {
+            LinearProgressIndicator(
+                progress = { watchProgress.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(3.dp),
+                color = AccentCyan,
+                trackColor = Color.Transparent
+            )
+        }
     }
 }
+

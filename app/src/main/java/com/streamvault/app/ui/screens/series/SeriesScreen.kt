@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.*
 import com.streamvault.app.ui.components.CategoryRow
+import com.streamvault.app.ui.components.ContinueWatchingRow
 import com.streamvault.app.ui.components.SeriesCard
 import com.streamvault.app.ui.components.TopNavBar
 import com.streamvault.app.ui.theme.*
@@ -71,6 +72,13 @@ fun SeriesScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 32.dp)
             ) {
+                // Continue Watching row (shown first, only if non-empty)
+                item(key = "continue_watching") {
+                    ContinueWatchingRow(
+                        items = uiState.continueWatching,
+                        onItemClick = { history -> onSeriesClick(history.seriesId ?: history.contentId) }
+                    )
+                }
                 items(
                     items = uiState.seriesByCategory.entries.toList(),
                     key = { it.key }

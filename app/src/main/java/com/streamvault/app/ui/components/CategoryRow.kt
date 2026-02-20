@@ -4,37 +4,51 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.streamvault.app.ui.theme.LocalSpacing
-import com.streamvault.app.ui.theme.OnBackground
+import com.streamvault.app.ui.theme.TextPrimary
+import com.streamvault.app.ui.theme.TextTertiary
+
+// ── Netflix-style horizontal category row ─────────────────────────
 
 @Composable
 fun <T> CategoryRow(
     title: String,
     items: List<T>,
     modifier: Modifier = Modifier,
+    onSeeAll: (() -> Unit)? = null,
     itemContent: @Composable (T) -> Unit
 ) {
-    val spacing = LocalSpacing.current
-
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = OnBackground,
-            modifier = Modifier.padding(
-                start = spacing.xl,
-                top = spacing.lg,
-                bottom = spacing.sm
+        // Row header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = TextPrimary
             )
-        )
+            if (onSeeAll != null) {
+                Text(
+                    text = "See All →",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TextTertiary
+                )
+            }
+        }
 
         LazyRow(
-            contentPadding = PaddingValues(horizontal = spacing.xl),
-            horizontalArrangement = Arrangement.spacedBy(spacing.md)
+            contentPadding = PaddingValues(horizontal = 48.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(
                 items = items,

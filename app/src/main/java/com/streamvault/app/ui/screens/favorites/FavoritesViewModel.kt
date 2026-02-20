@@ -71,6 +71,7 @@ class FavoritesViewModel @Inject constructor(
                                     )
                                 } else null
                             }
+                            else -> null // SERIES_EPISODE and future types not favoriteable
                         }
                     } catch (e: Exception) {
                         null

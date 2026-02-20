@@ -7,13 +7,13 @@ import androidx.tv.material3.darkColorScheme
 
 private val DarkColorScheme = darkColorScheme(
     primary = Primary,
-    onPrimary = OnBackground,
+    onPrimary = OnPrimary,
     surface = Surface,
-    onSurface = OnSurface,
+    onSurface = TextSecondary,
     background = Background,
-    onBackground = OnBackground,
+    onBackground = TextPrimary,
     error = ErrorColor,
-    onError = OnBackground
+    onError = OnPrimary
 )
 
 @Composable
@@ -23,6 +23,7 @@ fun StreamVaultTheme(content: @Composable () -> Unit) {
     ) {
         MaterialTheme(
             colorScheme = DarkColorScheme,
+            typography = StreamVaultTypography,
             content = content
         )
     }
