@@ -401,6 +401,85 @@ class HomeViewModel @Inject constructor(
     fun dismissCategoryOptions() {
         _uiState.update { it.copy(selectedCategoryForOptions = null) }
     }
+
+    fun enterChannelReorderMode(category: Category) {
+        dismissCategoryOptions()
+        _uiState.update { it.copy(isChannelReorderMode = true, reorderCategory = category) }
+    }
+
+    fun exitChannelReorderMode() {
+        // Discard any unsaved sorting by restoring from the original local snapshot
+        _uiState.update { it.copy(
+            isChannelReorderMode = false, 
+            reorderCategory = null,
+            filteredChannels = _localChannels.value
+        ) }
+    }
+
+    fun moveChannelUp(channel: Channel) {
+        val state = _uiState.value
+        val list = state.filteredChannels.toMutableList()
+        val idx = list.indexOf(channel)
+        if (idx > 0) {
+            list.removeAt(idx)
+            list.add(idx - 1, channel)
+            _uiState.update { it.copy(filteredChannels = list) }
+        }
+    }
+
+    fun moveChannelDown(channel: Channel) {
+        val state = _uiState.value
+        val list = state.filteredChannels.toMutableList()
+        val idx = list.indexOf(channel)
+        if (idx >= 0 && idx < list.size - 1) {
+            list.removeAt(idx)
+            list.add(idx + 1, channel)
+            _uiState.update { it.copy(filteredChannels = list) }
+        }
+    }
+
+    fun saveChannelReorder() {
+        val state = _uiState.value
+        val category = state.reorderCategory ?: return
+        val currentList = state.filteredChannels
+
+        // Exit reorder mode immediately for responsive UI
+        _uiState.update { it.copy(isChannelReorderMode = false, reorderCategory = null) }
+        
+        // Optimistically update local channels to match the new order before DB flow catches up
+        _localChannels.value = currentList
+
+        viewModelScope.launch {
+            try {
+                // Map the virtual category ID back to the Favorite Group ID
+                val groupId = if (category.id == -999L) null else -category.id
+
+                val favoritesFlow = if (groupId == null) {
+                    favoriteRepository.getFavorites(ContentType.LIVE)
+                } else {
+                    favoriteRepository.getFavoritesByGroup(groupId)
+                }
+
+                // Get current favorites
+                val favorites = favoritesFlow.first()
+                val favoriteMap = favorites.associateBy { it.contentId }
+
+                // Map the sorted Channel list back to Favorite entities with new positions
+                val reorderedFavorites = currentList.mapNotNull { ch ->
+                    favoriteMap[ch.id]
+                }.mapIndexed { i, fav ->
+                    fav.copy(position = i)
+                }
+
+                // Persist the new order in DB
+                favoriteRepository.reorderFavorites(reorderedFavorites)
+
+                _uiState.update { it.copy(userMessage = "Channel order saved") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(userMessage = "Failed to save channel order") }
+            }
+        }
+    }
 }
 
 data class HomeUiState(
@@ -420,5 +499,7 @@ data class HomeUiState(
     val showDeleteGroupDialog: Boolean = false,
     val groupToDelete: Category? = null,
     val parentalControlLevel: Int = 0,
-    val selectedCategoryForOptions: Category? = null
+    val selectedCategoryForOptions: Category? = null,
+    val isChannelReorderMode: Boolean = false,
+    val reorderCategory: Category? = null
 )

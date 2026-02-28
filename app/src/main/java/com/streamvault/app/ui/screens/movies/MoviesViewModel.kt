@@ -24,6 +24,8 @@ class MoviesViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(MoviesUiState())
     val uiState: StateFlow<MoviesUiState> = _uiState.asStateFlow()
 
+    private val _searchQuery = MutableStateFlow("")
+
     init {
         viewModelScope.launch {
             providerRepository.getActiveProvider()
@@ -31,9 +33,21 @@ class MoviesViewModel @Inject constructor(
                 .collectLatest { provider ->
                     // Movies by category
                     launch {
-                        movieRepository.getMovies(provider.id).collect { movies ->
-                            val grouped = movies.groupBy { it.categoryName ?: "Uncategorized" }
-                            _uiState.update { it.copy(moviesByCategory = grouped, isLoading = false) }
+                        combine(
+                            movieRepository.getMovies(provider.id),
+                            _searchQuery
+                        ) { movies, query ->
+                            val filtered = if (query.isBlank()) movies
+                            else movies.filter { it.name.contains(query, ignoreCase = true) }
+                            val grouped = filtered.groupBy { it.categoryName ?: "Uncategorized" }
+                            val categoryNames = grouped.keys.sorted()
+                            grouped to categoryNames
+                        }.collect { (grouped, categoryNames) ->
+                            _uiState.update { it.copy(
+                                moviesByCategory = grouped,
+                                categoryNames = categoryNames,
+                                isLoading = false
+                            ) }
                         }
                     }
                     // Continue Watching — last 20 movie/series items for this provider
@@ -53,6 +67,15 @@ class MoviesViewModel @Inject constructor(
         }
     }
 
+    fun selectCategory(categoryName: String?) {
+        _uiState.update { it.copy(selectedCategory = categoryName) }
+    }
+
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
+        _uiState.update { it.copy(searchQuery = query) }
+    }
+
     suspend fun verifyPin(pin: String): Boolean {
         return preferencesRepository.parentalPin.first() == pin
     }
@@ -60,6 +83,9 @@ class MoviesViewModel @Inject constructor(
 
 data class MoviesUiState(
     val moviesByCategory: Map<String, List<Movie>> = emptyMap(),
+    val categoryNames: List<String> = emptyList(),
+    val selectedCategory: String? = null,
+    val searchQuery: String = "",
     val continueWatching: List<PlaybackHistory> = emptyList(),
     val isLoading: Boolean = true,
     val parentalControlLevel: Int = 0

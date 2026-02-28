@@ -44,17 +44,22 @@ fun FocusableCard(
     onLongClick: (() -> Unit)? = null,
     width: Dp = 160.dp,
     height: Dp = 240.dp,
+    isReorderMode: Boolean = false,
+    isDragging: Boolean = false,
     content: @Composable BoxScope.(Boolean) -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
 
+    // In reorder mode, only the dragging item scales. Otherwise grid is static.
+    val targetScale = if (isDragging) 1.08f else if (isFocused && !isReorderMode) 1.08f else 1f
+    
     val scale by animateFloatAsState(
-        targetValue = if (isFocused) 1.08f else 1f,
+        targetValue = targetScale,
         animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
         label = "cardScale"
     )
     val shadowElevation by animateFloatAsState(
-        targetValue = if (isFocused) 24f else 0f,
+        targetValue = if (isFocused || isDragging) 24f else 0f,
         animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "cardShadow"
     )
@@ -82,7 +87,10 @@ fun FocusableCard(
                 shape = RoundedCornerShape(10.dp)
             ),
             focusedBorder = Border(
-                border = BorderStroke(2.dp, Primary),
+                border = BorderStroke(
+                    width = if (isDragging) 4.dp else 2.dp, 
+                    color = if (isDragging) AccentAmber else Primary
+                ),
                 shape = RoundedCornerShape(10.dp)
             )
         )
@@ -101,14 +109,18 @@ fun ChannelCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
-    isLocked: Boolean = false
+    isLocked: Boolean = false,
+    isReorderMode: Boolean = false,
+    isDragging: Boolean = false
 ) {
     FocusableCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier,
         width = 280.dp,
-        height = 157.dp
+        height = 157.dp,
+        isReorderMode = isReorderMode,
+        isDragging = isDragging
     ) { isFocused ->
         // Background: logo or solid surface
         if (!channel.logoUrl.isNullOrBlank() && !isLocked) {
@@ -218,7 +230,7 @@ fun ChannelCard(
     }
 }
 
-// ── Movie Card (2:3 poster) ────────────────────────────────────────
+// ── Movie Card (16:9 landscape thumbnail) ─────────────────────────────────────────
 
 @Composable
 fun MovieCard(
@@ -233,8 +245,8 @@ fun MovieCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier,
-        width = 150.dp,
-        height = 225.dp
+        width = 240.dp,
+        height = 135.dp
     ) { isFocused ->
         // Poster image
         if (!movie.posterUrl.isNullOrBlank() && !isLocked) {
@@ -332,7 +344,7 @@ fun MovieCard(
     }
 }
 
-// ── Series Card (2:3 poster) ───────────────────────────────────────
+// ── Series Card (16:9 landscape thumbnail) ────────────────────────────────────────
 
 @Composable
 fun SeriesCard(
@@ -351,8 +363,8 @@ fun SeriesCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier,
-        width = 150.dp,
-        height = 225.dp
+        width = 240.dp,
+        height = 135.dp
     ) { isFocused ->
         // Poster image
         if (!posterUrl.isNullOrBlank() && !isLocked) {

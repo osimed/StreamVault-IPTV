@@ -22,7 +22,8 @@ fun CategoryOptionsDialog(
     onDismissRequest: () -> Unit,
     onSetAsDefault: () -> Unit,
     onToggleLock: () -> Unit,
-    onDelete: (() -> Unit)? = null
+    onDelete: (() -> Unit)? = null,
+    onReorderChannels: (() -> Unit)? = null
 ) {
     // Fix for ghost clicks: Debounce interaction for 500ms to ignore long-press release
     var canInteract by remember { mutableStateOf(false) }
@@ -42,36 +43,43 @@ fun CategoryOptionsDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 
                 // Option 1: Set as Default
-                androidx.compose.material3.Button(
+                androidx.tv.material3.Button(
                     onClick = { if (canInteract) onSetAsDefault() },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    )
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(stringResource(R.string.category_options_set_default))
                 }
 
-                // Option 2: Lock/Unlock
+                // Option 2: Reorder Channels (only for virtual/custom categories)
+                if (onReorderChannels != null) {
+                    androidx.tv.material3.Button(
+                        onClick = {
+                            if (canInteract) {
+                                onReorderChannels()
+                                onDismissRequest()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("↕  Reorder Channels")
+                    }
+                }
+
+                // Option 3: Lock/Unlock
                 val lockText = if (category.isUserProtected) stringResource(R.string.category_options_unlock) else stringResource(R.string.category_options_lock)
-                androidx.compose.material3.Button(
+                androidx.tv.material3.Button(
                     onClick = { if (canInteract) onToggleLock() },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    )
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(lockText)
                 }
 
-                // Option 3: Delete (Optional)
+                // Option 4: Delete (Optional)
                 if (onDelete != null) {
-                    androidx.compose.material3.Button(
+                    androidx.tv.material3.Button(
                         onClick = { if (canInteract) onDelete() },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        colors = androidx.tv.material3.ButtonDefaults.colors(
                             containerColor = MaterialTheme.colorScheme.errorContainer,
                             contentColor = MaterialTheme.colorScheme.onErrorContainer
                         )

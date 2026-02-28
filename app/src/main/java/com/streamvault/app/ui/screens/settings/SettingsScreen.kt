@@ -248,6 +248,7 @@ fun SettingsScreen(
                 )
                 SettingsRow(label = stringResource(R.string.settings_app_version), value = "1.0.0")
                 SettingsRow(label = stringResource(R.string.settings_build), value = stringResource(R.string.settings_build_desc))
+                SettingsRow(label = stringResource(R.string.settings_developed_by), value = stringResource(R.string.settings_developer_name))
             }
         }
     }

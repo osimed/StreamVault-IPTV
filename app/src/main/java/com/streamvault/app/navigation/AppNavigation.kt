@@ -7,6 +7,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.streamvault.app.ui.screens.favorites.FavoritesScreen
+import com.streamvault.app.ui.screens.favorites.FavoriteUiModel
+
 import com.streamvault.app.ui.screens.home.HomeScreen
 import com.streamvault.app.ui.screens.movies.MoviesScreen
 import com.streamvault.app.ui.screens.player.PlayerScreen
@@ -162,18 +164,23 @@ fun AppNavigation() {
 
         composable(Routes.FAVORITES) {
             FavoritesScreen(
-                onItemClick = { streamUrl, title ->
-                    navController.navigate(Routes.player(streamUrl, title))
+                onItemClick = { item ->
+                    navController.navigate(
+                        Routes.player(
+                            streamUrl = item.streamUrl,
+                            title = item.title,
+                            internalId = item.favorite.contentId,
+                            categoryId = -999L,   // Global favorites virtual category
+                            providerId = -1L,
+                            isVirtual = true,
+                            contentType = item.favorite.contentType.name
+                        )
+                    )
                 },
                 onNavigate = { route ->
                     navController.navigate(route) {
-                        // Pop up to the start destination and save state
-                        popUpTo(Routes.HOME) {
-                            saveState = true
-                        }
-                        // Avoid multiple copies of the same destination when reselecting
+                        popUpTo(Routes.HOME) { saveState = true }
                         launchSingleTop = true
-                        // Restore state when reselecting a previously selected item
                         restoreState = true
                     }
                 },

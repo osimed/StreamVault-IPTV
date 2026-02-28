@@ -43,9 +43,7 @@ fun AddToGroupDialog(
     onToggleFavorite: () -> Unit,
     onAddToGroup: (Category) -> Unit,
     onRemoveFromGroup: (Category) -> Unit,
-    onCreateGroup: (String) -> Unit,
-    onMoveUp: (() -> Unit)? = null,
-    onMoveDown: (() -> Unit)? = null
+    onCreateGroup: (String) -> Unit
 ) {
     var showCreateGroup by remember { mutableStateOf(false) }
     var newGroupName by remember { mutableStateOf("") }
@@ -162,30 +160,7 @@ fun AddToGroupDialog(
                             }
                         }
 
-                        // Reordering Controls (only if enabled)
-                        if (onMoveUp != null && onMoveDown != null) {
-                            item {
-                                Text(
-                                    text = stringResource(R.string.add_group_reorder_title),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-                                )
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceEvenly
-                                ) {
-                                    OutlinedButton(onClick = onMoveUp, modifier = Modifier.weight(1f)) {
-                                        Text(stringResource(R.string.add_group_move_up))
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    OutlinedButton(onClick = onMoveDown, modifier = Modifier.weight(1f)) {
-                                        Text(stringResource(R.string.add_group_move_down))
-                                    }
-                                }
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                            }
-                        }
-
+                        // Reordering Controls removed (handled in dedicated reorder mode)
                         item {
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             Text(

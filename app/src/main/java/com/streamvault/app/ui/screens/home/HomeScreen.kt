@@ -18,6 +18,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.Icons
@@ -135,6 +137,9 @@ fun HomeScreen(
                     viewModel.dismissCategoryOptions()
                     viewModel.requestDeleteGroup(category)
                 }
+            } else null,
+            onReorderChannels = if (category.isVirtual) {
+                { viewModel.enterChannelReorderMode(category) }
             } else null
         )
     }
@@ -142,15 +147,59 @@ fun HomeScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(80.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TopNavBar(
-                    currentRoute = currentRoute,
-                    onNavigate = onNavigate,
-                    modifier = Modifier.weight(1f)
-                )
+                if (uiState.isChannelReorderMode) {
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = true,
+                        enter = androidx.compose.animation.slideInVertically(initialOffsetY = { -it }),
+                        exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { -it }),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Reordering '${uiState.selectedCategory?.name ?: "Channels"}'",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = Primary
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                androidx.tv.material3.Button(
+                                    onClick = { viewModel.exitChannelReorderMode() },
+                                    colors = androidx.tv.material3.ButtonDefaults.colors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                        contentColor = OnSurface
+                                    )
+                                ) { Text("Cancel", modifier = Modifier.padding(horizontal = 8.dp)) }
+                                
+                                androidx.tv.material3.Button(
+                                    onClick = { viewModel.saveChannelReorder() },
+                                    colors = androidx.tv.material3.ButtonDefaults.colors(
+                                        containerColor = Primary,
+                                        contentColor = Color.White
+                                    )
+                                ) { Text("Save Order", modifier = Modifier.padding(horizontal = 8.dp)) }
+                            }
+                        }
+                    }
+                } else {
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = true,
+                        enter = androidx.compose.animation.slideInVertically(initialOffsetY = { -it }),
+                        exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { -it })
+                    ) {
+                        TopNavBar(
+                            currentRoute = currentRoute,
+                            onNavigate = onNavigate,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
                 
                 // Playlist Switcher - REMOVED (Moved to Settings)
             }
@@ -333,10 +382,35 @@ fun HomeScreen(
                                     ignoreNextClick = false
                                 }
                             }
+
+                            // Reorder Drag State
+                            var draggingChannel by remember { mutableStateOf<Channel?>(null) }
                             
+                            // Exit drag state if reorder mode is cancelled
+                            LaunchedEffect(uiState.isChannelReorderMode) {
+                                if (!uiState.isChannelReorderMode) {
+                                    draggingChannel = null
+                                }
+                            }
+
                             LazyVerticalGrid(
                                 columns = GridCells.Adaptive(minSize = 180.dp),
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    // Handle BACK key to cancel reorder mode
+                                    .onPreviewKeyEvent { event ->
+                                        if (uiState.isChannelReorderMode && event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
+                                            if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+                                                if (draggingChannel != null) {
+                                                    draggingChannel = null // Drop item
+                                                    true
+                                                } else {
+                                                    viewModel.exitChannelReorderMode()
+                                                    true
+                                                }
+                                            } else false
+                                        } else false
+                                    },
                                 contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 32.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -346,12 +420,18 @@ fun HomeScreen(
                                     key = { it.id }
                                 ) { channel ->
                                     val isLocked = (channel.isAdult || channel.isUserProtected || (uiState.selectedCategory?.isUserProtected ?: false)) && uiState.parentalControlLevel == 1
+                                    val isDraggingThis = draggingChannel == channel
                                     
                                     ChannelCard(
                                         channel = channel,
                                         isLocked = isLocked,
+                                        isReorderMode = uiState.isChannelReorderMode,
+                                        isDragging = isDraggingThis,
                                         onClick = { 
-                                            if (ignoreNextClick) {
+                                            if (uiState.isChannelReorderMode) {
+                                                // Toggle drag state
+                                                draggingChannel = if (isDraggingThis) null else channel
+                                            } else if (ignoreNextClick) {
                                                 ignoreNextClick = false
                                             } else if (!uiState.showDialog) {
                                                 if (isLocked) {
@@ -363,12 +443,25 @@ fun HomeScreen(
                                             }
                                         },
                                         onLongClick = {
-                                            // Allow long click even if locked? Maybe restricts context menu?
-                                            // For now, allow it (e.g. to delete from favorites/groups)
-                                            ignoreNextClick = true
-                                            viewModel.onShowDialog(channel)
+                                            if (!uiState.isChannelReorderMode) {
+                                                ignoreNextClick = true
+                                                viewModel.onShowDialog(channel)
+                                            }
                                         },
-                                        modifier = Modifier.aspectRatio(16f/9f)
+                                        modifier = Modifier
+                                            .aspectRatio(16f/9f)
+                                            .onPreviewKeyEvent { event ->
+                                                if (uiState.isChannelReorderMode && isDraggingThis && event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
+                                                    // Consume D-pad to move item instead of changing focus
+                                                    when (event.nativeKeyEvent.keyCode) {
+                                                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> { viewModel.moveChannelUp(channel); true }
+                                                        android.view.KeyEvent.KEYCODE_DPAD_UP -> { viewModel.moveChannelUp(channel); true }
+                                                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> { viewModel.moveChannelDown(channel); true }
+                                                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> { viewModel.moveChannelDown(channel); true }
+                                                        else -> false
+                                                    }
+                                                } else false
+                                            }
                                     )
                                 }
                             }
@@ -377,7 +470,7 @@ fun HomeScreen(
                 }
             }
         }
-        
+
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
@@ -397,8 +490,6 @@ fun HomeScreen(
             onDismiss = { viewModel.onDismissDialog() },
             onToggleFavorite = { 
                 if (channel.isFavorite) viewModel.removeFavorite(channel) else viewModel.addFavorite(channel)
-                // Dialog dismissed by ViewModel via side-effect or manually here?
-                // VM dismisses it now.
             },
             onAddToGroup = { group ->
                 viewModel.addToGroup(channel, group)
@@ -406,9 +497,7 @@ fun HomeScreen(
             onRemoveFromGroup = { group ->
                  viewModel.removeFromGroup(channel, group)
             },
-            onCreateGroup = { name -> viewModel.createCustomGroup(name) },
-            onMoveUp = if (uiState.selectedCategory?.isVirtual == true) { { viewModel.moveChannel(channel, -1) } } else null,
-            onMoveDown = if (uiState.selectedCategory?.isVirtual == true) { { viewModel.moveChannel(channel, 1) } } else null
+            onCreateGroup = { name -> viewModel.createCustomGroup(name) }
         )
     }
 
@@ -553,6 +642,151 @@ fun SearchInput(
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(Primary)
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun ReorderSidePanel(
+    channels: List<Channel>,
+    onMoveUp: (Channel) -> Unit,
+    onMoveDown: (Channel) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit
+) {
+    var draggingChannel by remember { mutableStateOf<Channel?>(null) }
+    
+    // Focus requester to trap focus inside the panel
+    val panelFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        panelFocusRequester.requestFocus()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(280.dp)
+            .background(SurfaceElevated)
+            .padding(16.dp)
+            .focusRequester(panelFocusRequester)
+            .focusGroup() // Traps D-pad focus in this container
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Header
+            Text(
+                "Reorder Channels", 
+                style = MaterialTheme.typography.titleMedium, 
+                color = Primary,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+            
+            // Actions
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            ) {
+                androidx.tv.material3.Button(
+                    onClick = onSave,
+                    colors = androidx.tv.material3.ButtonDefaults.colors(
+                        containerColor = Primary,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Save", maxLines = 1) }
+
+                androidx.tv.material3.Button(
+                    onClick = onCancel,
+                    colors = androidx.tv.material3.ButtonDefaults.colors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = OnSurface
+                    ),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Cancel", maxLines = 1) }
+            }
+            
+            // List
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(channels.size) { index ->
+                    val channel = channels[index]
+                    var isFocused by remember { mutableStateOf(false) }
+                    val isDraggingThis = draggingChannel == channel
+                    
+                    Surface(
+                        onClick = { 
+                            draggingChannel = if (isDraggingThis) null else channel 
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { isFocused = it.isFocused }
+                            .onKeyEvent { event ->
+                                if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
+                                    if (isDraggingThis) {
+                                        when (event.nativeKeyEvent.keyCode) {
+                                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                onMoveUp(channel)
+                                                true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                onMoveDown(channel)
+                                                true
+                                            }
+                                            else -> false
+                                        }
+                                    } else {
+                                        // Trap focus left/right so we don't accidentally exit panel
+                                        if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT ||
+                                            event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                                            true 
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                } else false
+                            },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                        colors = ClickableSurfaceDefaults.colors(
+                            focusedContainerColor = if (isDraggingThis) Primary else Primary.copy(alpha = 0.2f),
+                            containerColor = if (isDraggingThis) Primary.copy(alpha = 0.5f) else Color.Transparent
+                        ),
+                        border = ClickableSurfaceDefaults.border(
+                            focusedBorder = Border(
+                                border = BorderStroke(2.dp, FocusBorder),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isDraggingThis) {
+                                Text("↕", color = Color.White, modifier = Modifier.padding(end = 8.dp))
+                            }
+                            Text(
+                                "${index + 1}. ${channel.name}", 
+                                modifier = Modifier.weight(1f), 
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isDraggingThis) Color.White else if (isFocused) OnBackground else OnSurface,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+            
+            // Helper Text
+            Text(
+                if (draggingChannel != null) "UP/DOWN to move.\nOK to drop." else "OK to grab channel.",
+                style = MaterialTheme.typography.bodySmall,
+                color = OnSurfaceDim,
+                modifier = Modifier.padding(top = 16.dp).fillMaxWidth(),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
         }
     }
 }

@@ -56,6 +56,9 @@ class PlayerViewModel @Inject constructor(
     private val _programHistory = MutableStateFlow<List<Program>>(emptyList())
     val programHistory: StateFlow<List<Program>> = _programHistory.asStateFlow()
 
+    private val _upcomingPrograms = MutableStateFlow<List<Program>>(emptyList())
+    val upcomingPrograms: StateFlow<List<Program>> = _upcomingPrograms.asStateFlow()
+
     private val _currentChannel = MutableStateFlow<com.streamvault.domain.model.Channel?>(null)
     val currentChannel: StateFlow<com.streamvault.domain.model.Channel?> = _currentChannel.asStateFlow()
     
@@ -74,21 +77,50 @@ class PlayerViewModel @Inject constructor(
     private val _currentChannelList = MutableStateFlow<List<com.streamvault.domain.model.Channel>>(emptyList())
     val currentChannelList: StateFlow<List<com.streamvault.domain.model.Channel>> = _currentChannelList.asStateFlow()
 
+    private val _displayChannelNumber = MutableStateFlow(0)
+    val displayChannelNumber: StateFlow<Int> = _displayChannelNumber.asStateFlow()
+
+    private val _showChannelInfoOverlay = MutableStateFlow(false)
+    val showChannelInfoOverlay: StateFlow<Boolean> = _showChannelInfoOverlay.asStateFlow()
+
+    private var channelInfoHideJob: Job? = null
+
     fun openChannelListOverlay() {
         _showChannelListOverlay.value = true
         _showEpgOverlay.value = false
+        _showChannelInfoOverlay.value = false
         _showControls.value = false
     }
 
     fun openEpgOverlay() {
         _showEpgOverlay.value = true
         _showChannelListOverlay.value = false
+        _showChannelInfoOverlay.value = false
         _showControls.value = false
+    }
+
+    fun openChannelInfoOverlay() {
+        _showChannelInfoOverlay.value = true
+        _showChannelListOverlay.value = false
+        _showEpgOverlay.value = false
+        _showControls.value = false
+        channelInfoHideJob?.cancel()
+        channelInfoHideJob = viewModelScope.launch {
+            delay(8000)
+            _showChannelInfoOverlay.value = false
+        }
+    }
+
+    fun closeChannelInfoOverlay() {
+        channelInfoHideJob?.cancel()
+        _showChannelInfoOverlay.value = false
     }
 
     fun closeOverlays() {
         _showChannelListOverlay.value = false
         _showEpgOverlay.value = false
+        _showChannelInfoOverlay.value = false
+        channelInfoHideJob?.cancel()
     }
 
     // Zapping state
@@ -221,10 +253,12 @@ class PlayerViewModel @Inject constructor(
                 }
             }
             fetchProgramHistory(epgChannelId)
+            fetchUpcomingPrograms(epgChannelId)
         } else {
             _currentProgram.value = null
             _nextProgram.value = null
             _programHistory.value = emptyList()
+            _upcomingPrograms.value = emptyList()
         }
     }
 
@@ -236,6 +270,17 @@ class PlayerViewModel @Inject constructor(
             epgRepository.getProgramsForChannel(channelId, start, now).collect { programs ->
                 // Only show programs that have archive (for Xtream)
                 _programHistory.value = programs.filter { it.hasArchive }.sortedByDescending { it.startTime }
+            }
+        }
+    }
+
+    private fun fetchUpcomingPrograms(channelId: String) {
+        viewModelScope.launch {
+            // Fetch next 6 hours
+            val now = System.currentTimeMillis()
+            val end = now + (6 * 60 * 60 * 1000L)
+            epgRepository.getProgramsForChannel(channelId, now, end).collect { programs ->
+                _upcomingPrograms.value = programs.sortedBy { it.startTime }
             }
         }
     }
@@ -278,6 +323,8 @@ class PlayerViewModel @Inject constructor(
                 
                 if (currentChannelIndex != -1) {
                     _currentChannel.value = channelList[currentChannelIndex]
+                    val ch = channelList[currentChannelIndex]
+                    _displayChannelNumber.value = if (ch.number > 0) ch.number else currentChannelIndex + 1
                 }
             }
         }
@@ -323,6 +370,7 @@ class PlayerViewModel @Inject constructor(
         val channel = channelList[index]
         currentChannelIndex = index
         _currentChannel.value = channel
+        _displayChannelNumber.value = if (channel.number > 0) channel.number else index + 1
         
         // Prepare player
         val streamInfo = com.streamvault.domain.model.StreamInfo(
@@ -346,6 +394,7 @@ class PlayerViewModel @Inject constructor(
     fun seekBackward() = playerEngine.seekBackward()
 
     fun toggleControls() {
+        closeChannelInfoOverlay()
         _showControls.value = !_showControls.value
     }
 

@@ -27,6 +27,7 @@ import java.util.*
 fun EpgOverlay(
     isVisible: Boolean,
     currentChannel: Channel?,
+    displayChannelNumber: Int = 0,
     currentProgram: Program?,
     nextProgram: Program?,
     modifier: Modifier = Modifier
@@ -61,7 +62,7 @@ fun EpgOverlay(
                 // Channel Info Header
                 if (currentChannel != null) {
                     Text(
-                        text = "${currentChannel.number}. ${currentChannel.name}",
+                        text = "$displayChannelNumber. ${currentChannel.name}",
                         style = MaterialTheme.typography.displaySmall,
                         color = Primary,
                         fontWeight = FontWeight.Bold,

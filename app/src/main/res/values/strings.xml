@@ -89,6 +89,8 @@
     <string name="settings_app_version">App Version</string>
     <string name="settings_build">Build</string>
     <string name="settings_build_desc">StreamVault for Android TV</string>
+    <string name="settings_developed_by">Developed by</string>
+    <string name="settings_developer_name">David Nashash</string>
     <string name="settings_syncing">Syncing data, please wait...</string>
     <string name="settings_enter_new_pin">Enter New PIN</string>
     <string name="settings_enter_pin">Enter PIN</string>

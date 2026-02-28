@@ -70,6 +70,8 @@
     <string name="settings_app_version">גרסת אפליקציה</string>
     <string name="settings_build">בנייה</string>
     <string name="settings_build_desc">StreamVault עבור Android TV</string>
+    <string name="settings_developed_by">פותח על ידי</string>
+    <string name="settings_developer_name">David Nashash</string>
     <string name="settings_syncing">מסנכרן נתונים, אנא המתן...</string>
     <string name="settings_enter_new_pin">הזן קוד סודי חדש</string>
     <string name="settings_enter_pin">הזן קוד סודי</string>
