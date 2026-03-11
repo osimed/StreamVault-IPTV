@@ -1,6 +1,7 @@
 package com.streamvault.data.sync
 
 import com.google.common.truth.Truth.assertThat
+import com.streamvault.data.local.DatabaseTransactionRunner
 import com.streamvault.data.local.dao.CategoryDao
 import com.streamvault.data.local.dao.ChannelDao
 import com.streamvault.data.local.dao.MovieDao
@@ -10,20 +11,24 @@ import com.streamvault.data.local.entity.ProviderEntity
 import com.streamvault.data.parser.M3uParser
 import com.streamvault.data.remote.xtream.XtreamApiService
 import com.streamvault.domain.model.SyncState
+import com.streamvault.domain.model.Result
 import com.streamvault.domain.repository.EpgRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.atLeast
+import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import java.util.zip.GZIPOutputStream
 
 /**
  * Unit tests for [SyncManager] state machine transitions.
@@ -37,6 +42,12 @@ import org.mockito.kotlin.whenever
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SyncManagerTest {
+    @get:Rule
+    val tempFolder = TemporaryFolder()
+
+    private class ImmediateTransactionRunner : DatabaseTransactionRunner {
+        override suspend fun <T> inTransaction(block: suspend () -> T): T = block()
+    }
 
     // ── In-memory fake ──────────────────────────────────────────────
 
@@ -77,9 +88,17 @@ class SyncManagerTest {
 
     private fun buildManager(
         providerType: String = "XTREAM_CODES",
-        providerPresent: Boolean = true
+        providerPresent: Boolean = true,
+        providerEntity: ProviderEntity? = null
     ): SyncManager = SyncManager(
-        providerDao = FakeProviderDao(if (providerPresent) sampleProvider(providerType) else null),
+        transactionRunner = ImmediateTransactionRunner(),
+        providerDao = FakeProviderDao(
+            if (providerPresent) {
+                providerEntity ?: sampleProvider(providerType)
+            } else {
+                null
+            }
+        ),
         channelDao = channelDao,
         movieDao = movieDao,
         seriesDao = seriesDao,
@@ -192,8 +211,61 @@ class SyncManagerTest {
         val result = mgr.sync(1L, force = true)
 
         assertThat(result.isSuccess).isTrue()
-        verify(xtreamApi).getLiveCategories(any(), any(), any(), any())
-        verify(xtreamApi).getLiveStreams(any(), any(), any(), any(), anyOrNull())
+        verify(xtreamApi, atLeastOnce()).getLiveCategories(any(), any(), any(), any())
+        verify(xtreamApi, atLeastOnce()).getLiveStreams(any(), any(), any(), any(), anyOrNull())
+    }
+
+    @Test
+    fun `sync_m3u_fileImport_batchesAndDiscoversEpg`() = runTest {
+        whenever(channelDao.getIdMappings(1L)).thenReturn(emptyList())
+        whenever(movieDao.getIdMappings(1L)).thenReturn(emptyList())
+
+        val playlist = tempFolder.newFile("playlist.m3u")
+        playlist.writeText(buildString {
+            append("#EXTM3U x-tvg-url=\"http://epg.example.com/guide.xml\"\n")
+            repeat(2501) { index ->
+                append("#EXTINF:-1 group-title=\"News\",Channel ${index + 1}\n")
+                append("http://live.example.com/ch${index + 1}.ts\n")
+            }
+            append("#EXTINF:-1 group-title=\"Movies\",Movie One\n")
+            append("http://vod.example.com/movie1.mp4\n")
+        })
+        val url = playlist.toURI().toString()
+        val provider = sampleProvider("M3U").copy(serverUrl = url, m3uUrl = url, epgUrl = "")
+        val mgr = buildManager(providerType = "M3U", providerEntity = provider)
+
+        val result = mgr.sync(1L, force = true)
+
+        if (result is Result.Error) {
+            error(result.message)
+        }
+        assertThat(result.isSuccess).isTrue()
+        verify(channelDao, atLeast(3)).insertAll(any())
+        verify(movieDao, atLeastOnce()).insertAll(any())
+    }
+
+    @Test
+    fun `sync_m3u_gzipFileImport_succeeds`() = runTest {
+        whenever(channelDao.getIdMappings(1L)).thenReturn(emptyList())
+        whenever(movieDao.getIdMappings(1L)).thenReturn(emptyList())
+
+        val gzFile = tempFolder.newFile("playlist.m3u.gz")
+        GZIPOutputStream(gzFile.outputStream()).bufferedWriter(Charsets.UTF_8).use { writer ->
+            writer.write("#EXTM3U\n")
+            writer.write("#EXTINF:-1 group-title=\"Live\",Compressed Channel\n")
+            writer.write("http://live.example.com/compressed.ts\n")
+        }
+        val url = gzFile.toURI().toString()
+        val provider = sampleProvider("M3U").copy(serverUrl = url, m3uUrl = url)
+        val mgr = buildManager(providerType = "M3U", providerEntity = provider)
+
+        val result = mgr.sync(1L, force = true)
+
+        if (result is Result.Error) {
+            error(result.message)
+        }
+        assertThat(result.isSuccess).isTrue()
+        verify(channelDao, atLeastOnce()).insertAll(any())
     }
 
     // ── M3U sync failure ────────────────────────────────────────────
@@ -319,6 +391,7 @@ class SyncManagerTest {
     ) = M3uParser.M3uEntry(
         name = "Test", groupTitle = group,
         tvgId = null, tvgName = null, tvgLogo = null, tvgChno = null,
-        catchUp = null, catchUpDays = null, catchUpSource = null, url = url
+        tvgLanguage = null, tvgCountry = null,
+        catchUp = null, catchUpDays = null, catchUpSource = null, timeshift = null, url = url
     )
 }

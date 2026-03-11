@@ -1,5 +1,7 @@
 package com.streamvault.app.di
 
+import com.streamvault.data.local.DatabaseTransactionRunner
+import com.streamvault.data.local.RoomDatabaseTransactionRunner
 import com.streamvault.data.repository.*
 import com.streamvault.domain.repository.*
 import dagger.Binds
@@ -39,6 +41,9 @@ abstract class RepositoryModule {
 
     @Binds @Singleton
     abstract fun bindSyncMetadataRepository(impl: SyncMetadataRepositoryImpl): SyncMetadataRepository
+
+    @Binds @Singleton
+    abstract fun bindDatabaseTransactionRunner(impl: RoomDatabaseTransactionRunner): DatabaseTransactionRunner
 
     @Binds @Singleton
     abstract fun bindBackupManager(impl: com.streamvault.data.manager.BackupManagerImpl): com.streamvault.domain.manager.BackupManager

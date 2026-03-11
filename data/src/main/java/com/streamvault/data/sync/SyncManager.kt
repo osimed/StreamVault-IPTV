@@ -1,40 +1,47 @@
 package com.streamvault.data.sync
 
 import android.util.Log
+import com.streamvault.data.local.DatabaseTransactionRunner
 import com.streamvault.data.local.dao.CategoryDao
 import com.streamvault.data.local.dao.ChannelDao
 import com.streamvault.data.local.dao.MovieDao
 import com.streamvault.data.local.dao.ProviderDao
 import com.streamvault.data.local.dao.SeriesDao
 import com.streamvault.data.local.entity.CategoryEntity
-import com.streamvault.data.mapper.*
+import com.streamvault.data.local.entity.ChannelEntity
+import com.streamvault.data.local.entity.MovieEntity
+import com.streamvault.data.mapper.toDomain
+import com.streamvault.data.mapper.toEntity
 import com.streamvault.data.parser.M3uParser
 import com.streamvault.data.remote.xtream.XtreamApiService
 import com.streamvault.data.remote.xtream.XtreamProvider
 import com.streamvault.data.security.CredentialCrypto
 import com.streamvault.data.util.AdultContentClassifier
 import com.streamvault.domain.model.Channel
-import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.Movie
 import com.streamvault.domain.model.Provider
 import com.streamvault.domain.model.ProviderType
+import com.streamvault.domain.model.SyncMetadata
 import com.streamvault.domain.model.SyncState
 import com.streamvault.domain.repository.EpgRepository
+import com.streamvault.domain.repository.SyncMetadataRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import com.streamvault.domain.repository.SyncMetadataRepository
-import com.streamvault.domain.model.SyncMetadata
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import java.io.BufferedInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.security.MessageDigest
+import java.util.zip.GZIPInputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -46,18 +53,9 @@ enum class SyncRepairSection {
     SERIES
 }
 
-/**
- * Centralised sync engine that owns the state machine and all data refresh logic.
- *
- * Formerly this logic was scattered inside `ProviderRepositoryImpl`. Moving it here
- * gives us:
- *  - A single source of truth for `SyncState`
- *  - A cancellable coroutine scope independent of ViewModel lifetimes
- *  - Stable, hash-based M3U entry IDs (no more index-based fragility)
- *  - Testable sync logic (can be unit-tested with fakes for all DAOs)
- */
 @Singleton
 class SyncManager @Inject constructor(
+    private val transactionRunner: DatabaseTransactionRunner,
     private val providerDao: ProviderDao,
     private val channelDao: ChannelDao,
     private val movieDao: MovieDao,
@@ -74,17 +72,48 @@ class SyncManager @Inject constructor(
         val warnings: List<String> = emptyList()
     )
 
+    private data class M3uImportStats(
+        val header: M3uParser.M3uHeader,
+        val liveCount: Int,
+        val movieCount: Int
+    )
+
+    private data class StreamedPlaylist(
+        val inputStream: InputStream,
+        val contentEncoding: String? = null,
+        val sourceName: String? = null
+    )
+
+    private class CategoryAccumulator(
+        private val providerId: Long,
+        private val type: String,
+        private val startId: Long
+    ) {
+        private val categoryIds = LinkedHashMap<String, Long>()
+
+        fun idFor(name: String): Long {
+            return categoryIds.getOrPut(name) { startId + categoryIds.size }
+        }
+
+        fun entities(): List<CategoryEntity> {
+            return categoryIds.map { (name, id) ->
+                CategoryEntity(
+                    categoryId = id,
+                    name = name,
+                    parentId = 0,
+                    type = type,
+                    providerId = providerId,
+                    isAdult = AdultContentClassifier.isAdultCategoryName(name)
+                )
+            }
+        }
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
-    // ── Public API ──────────────────────────────────────────────────
-
-    /**
-     * Perform a full data refresh for [providerId].
-     * [onProgress] is an optional UI callback for fine-grained status strings.
-     */
     suspend fun sync(
         providerId: Long,
         force: Boolean = false,
@@ -96,7 +125,7 @@ class SyncManager @Inject constructor(
         val provider = providerEntity
             .copy(password = CredentialCrypto.decryptIfNeeded(providerEntity.password))
             .toDomain()
-        _syncState.value = SyncState.Syncing("Starting…")
+        _syncState.value = SyncState.Syncing("Starting...")
 
         return try {
             val outcome = when (provider.type) {
@@ -104,13 +133,10 @@ class SyncManager @Inject constructor(
                 ProviderType.M3U -> syncM3u(provider, force, onProgress)
             }
             providerDao.updateSyncTime(providerId, System.currentTimeMillis())
-            if (outcome.partial) {
-                _syncState.value = SyncState.Partial(
-                    message = "Sync completed with warnings",
-                    warnings = outcome.warnings
-                )
+            _syncState.value = if (outcome.partial) {
+                SyncState.Partial("Sync completed with warnings", outcome.warnings)
             } else {
-                _syncState.value = SyncState.Success()
+                SyncState.Success()
             }
             com.streamvault.domain.model.Result.success(Unit)
         } catch (e: Exception) {
@@ -120,7 +146,6 @@ class SyncManager @Inject constructor(
         }
     }
 
-    /** Fire-and-forget variant — launches on the internal scope so callers don't need to await. */
     fun syncAsync(providerId: Long, force: Boolean = false, onProgress: ((String) -> Unit)? = null) {
         scope.launch { sync(providerId, force, onProgress) }
     }
@@ -156,15 +181,13 @@ class SyncManager @Inject constructor(
         }
     }
 
-    // ── Xtream sync ─────────────────────────────────────────────────
-
     private suspend fun syncXtream(
         provider: Provider,
         force: Boolean,
         onProgress: ((String) -> Unit)?
     ): SyncOutcome {
         val warnings = mutableListOf<String>()
-        progress(onProgress, "Connecting to server…")
+        progress(onProgress, "Connecting to server...")
         val api = XtreamProvider(
             providerId = provider.id,
             api = xtreamApiService,
@@ -176,97 +199,64 @@ class SyncManager @Inject constructor(
         var metadata = syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id)
         val now = System.currentTimeMillis()
 
-        // Live (TTL 24h)
         if (force || !isCacheValid(metadata.lastLiveSync, TTL_24_HOURS, now)) {
-            progress(onProgress, "Downloading Live TV…")
+            progress(onProgress, "Downloading Live TV...")
             val cats = retryTransient { api.getLiveCategories().getOrThrow("Live categories") }
-            Log.d(TAG, "Saving ${cats.size} live categories")
             categoryDao.replaceAll(provider.id, "LIVE", cats.map { it.toEntity(provider.id) })
 
             val channels = retryTransient { api.getLiveStreams().getOrThrow("Live streams") }
-            Log.d(TAG, "Saving ${channels.size} channels")
             channelDao.replaceAll(provider.id, channels.map { it.toEntity() })
-            
+
             metadata = metadata.copy(lastLiveSync = now, liveCount = channels.size)
             syncMetadataRepository.updateMetadata(metadata)
-        } else {
-            Log.d(TAG, "Skipping Live TV sync (cache still valid)")
         }
 
-        // VOD (TTL 24h)
         if (force || !isCacheValid(metadata.lastMovieSync, TTL_24_HOURS, now)) {
-            progress(onProgress, "Downloading Movies…")
+            progress(onProgress, "Downloading Movies...")
             val catsResult = runCatching { retryTransient { api.getVodCategories().getOrThrow("VOD categories") } }
-            val cats = catsResult.getOrNull()
-            if (cats != null) {
-                Log.d(TAG, "Saving ${cats.size} VOD categories")
-                categoryDao.replaceAll(provider.id, "MOVIE", cats.map { it.toEntity(provider.id) })
-            } else {
-                warnings.add("Movies categories sync failed")
-            }
-            
+            catsResult.getOrNull()?.let {
+                categoryDao.replaceAll(provider.id, "MOVIE", it.map { category -> category.toEntity(provider.id) })
+            } ?: warnings.add("Movies categories sync failed")
+
             val moviesResult = runCatching { retryTransient { api.getVodStreams().getOrThrow("VOD streams") } }
-            val movies = moviesResult.getOrNull()
-            if (movies != null) {
-                Log.d(TAG, "Saving ${movies.size} movies")
-                movieDao.replaceAll(provider.id, movies.map { it.toEntity() })
-                metadata = metadata.copy(lastMovieSync = now, movieCount = movies.size)
+            moviesResult.getOrNull()?.let {
+                movieDao.replaceAll(provider.id, it.map { movie -> movie.toEntity() })
+                metadata = metadata.copy(lastMovieSync = now, movieCount = it.size)
                 syncMetadataRepository.updateMetadata(metadata)
-            } else {
-                warnings.add("Movies streams sync failed")
-            }
-        } else {
-            Log.d(TAG, "Skipping Movies sync (cache still valid)")
+            } ?: warnings.add("Movies streams sync failed")
         }
 
-        // Series (TTL 24h)
         if (force || !isCacheValid(metadata.lastSeriesSync, TTL_24_HOURS, now)) {
-            progress(onProgress, "Downloading Series…")
+            progress(onProgress, "Downloading Series...")
             val catsResult = runCatching { retryTransient { api.getSeriesCategories().getOrThrow("Series categories") } }
-            val cats = catsResult.getOrNull()
-            if (cats != null) {
-                Log.d(TAG, "Saving ${cats.size} series categories")
-                categoryDao.replaceAll(provider.id, "SERIES", cats.map { it.toEntity(provider.id) })
-            } else {
-                warnings.add("Series categories sync failed")
-            }
-            
+            catsResult.getOrNull()?.let {
+                categoryDao.replaceAll(provider.id, "SERIES", it.map { category -> category.toEntity(provider.id) })
+            } ?: warnings.add("Series categories sync failed")
+
             val seriesResult = runCatching { retryTransient { api.getSeriesList().getOrThrow("Series list") } }
-            val seriesList = seriesResult.getOrNull()
-            if (seriesList != null) {
-                Log.d(TAG, "Saving ${seriesList.size} series")
-                seriesDao.replaceAll(provider.id, seriesList.map { it.toEntity() })
-                metadata = metadata.copy(lastSeriesSync = now, seriesCount = seriesList.size)
+            seriesResult.getOrNull()?.let {
+                seriesDao.replaceAll(provider.id, it.map { series -> series.toEntity() })
+                metadata = metadata.copy(lastSeriesSync = now, seriesCount = it.size)
                 syncMetadataRepository.updateMetadata(metadata)
-            } else {
-                warnings.add("Series list sync failed")
-            }
-        } else {
-            Log.d(TAG, "Skipping Series sync (cache still valid)")
+            } ?: warnings.add("Series list sync failed")
         }
 
-        // EPG (TTL 6h)
         if (force || !isCacheValid(metadata.lastEpgSync, TTL_6_HOURS, now)) {
             try {
-                progress(onProgress, "Downloading EPG…")
+                progress(onProgress, "Downloading EPG...")
                 val base = provider.serverUrl.trimEnd('/')
                 val xmltvUrl = provider.epgUrl.ifBlank { "$base/xmltv.php?username=${provider.username}&password=${provider.password}" }
                 retryTransient { epgRepository.refreshEpg(provider.id, xmltvUrl) }
-                
                 metadata = metadata.copy(lastEpgSync = now)
                 syncMetadataRepository.updateMetadata(metadata)
             } catch (e: Exception) {
                 Log.e(TAG, "EPG sync failed (non-fatal): ${e.message}")
                 warnings.add("EPG sync failed")
             }
-        } else {
-            Log.d(TAG, "Skipping EPG sync (cache still valid)")
         }
 
         return if (warnings.isEmpty()) SyncOutcome() else SyncOutcome(partial = true, warnings = warnings)
     }
-
-    // ── M3U sync ────────────────────────────────────────────────────
 
     private suspend fun syncM3u(
         provider: Provider,
@@ -277,146 +267,34 @@ class SyncManager @Inject constructor(
         var metadata = syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id)
         val now = System.currentTimeMillis()
 
-        // M3U must be fully re-downloaded (no granular deltas), so we use lastLiveSync
-        // as the general indicator for the playlist payload TTL (24h)
         if (force || !isCacheValid(metadata.lastLiveSync, TTL_24_HOURS, now)) {
-            withContext(Dispatchers.IO) {
-                Log.d(TAG, "Starting M3U refresh for ${provider.name}")
-                progress(onProgress, "Downloading Playlist…")
-                val urlStr = provider.m3uUrl.ifBlank { provider.serverUrl }
-                val inputStream = if (urlStr.startsWith("file://")) {
-                    java.io.File(java.net.URI(urlStr)).inputStream()
-                } else {
-                    val payload = retryTransient {
-                        okHttpClient.newCall(Request.Builder().url(urlStr).build()).execute().use { response ->
-                            if (!response.isSuccessful) {
-                                if (response.code in 500..599 || response.code == 429) {
-                                    throw IOException("Transient HTTP ${response.code}")
-                                }
-                                throw IllegalStateException("Failed to download M3U: HTTP ${response.code}")
-                            }
-                            response.body?.bytes() ?: throw IllegalStateException("Empty M3U response")
-                        }
-                    }
-                    payload.inputStream()
-                }
-
-                progress(onProgress, "Parsing Playlist…")
-                val parseResult = inputStream.use { m3uParser.parse(it) }
-                val entries = parseResult.entries
-                val header = parseResult.header
-                Log.d(TAG, "Parsed ${entries.size} M3U entries")
-
-                if (entries.isEmpty()) {
-                    throw IllegalStateException("Playlist is empty or contains no supported entries")
-                }
-
-                // Auto-update EPG URL from header if missing
-                if (provider.epgUrl.isBlank() && !header.tvgUrl.isNullOrBlank()) {
-                    Log.d(TAG, "Auto-discovered EPG URL from header: ${redactUrlForLogs(header.tvgUrl)}")
-                    providerDao.updateEpgUrl(provider.id, header.tvgUrl)
-                }
-
-                val liveEntries = entries.filter { !isVodEntry(it) }
-                val vodEntries = entries.filter { isVodEntry(it) }
-                if (liveEntries.isEmpty() && vodEntries.isEmpty()) {
-                    throw IllegalStateException("Playlist contains no playable live or VOD entries")
-                }
-
-                // ── Categories ──────────────────────────────────────
-                val liveGroups = liveEntries.map { it.groupTitle }.distinct()
-                val vodGroups = vodEntries.map { it.groupTitle }.distinct()
-
-                val liveCategories = liveGroups.mapIndexed { i, name ->
-                    CategoryEntity(categoryId = (i + 1).toLong(), name = name,
-                        parentId = 0, type = "LIVE", providerId = provider.id,
-                        isAdult = AdultContentClassifier.isAdultCategoryName(name))
-                }
-                val vodCategories = vodGroups.mapIndexed { i, name ->
-                    CategoryEntity(categoryId = (i + 10_000).toLong(), name = name,
-                        parentId = 0, type = "MOVIE", providerId = provider.id,
-                        isAdult = AdultContentClassifier.isAdultCategoryName(name))
-                }
-
-                progress(onProgress, "Saving Channels…")
-                categoryDao.replaceAll(provider.id, "LIVE", liveCategories)
-                categoryDao.replaceAll(provider.id, "MOVIE", vodCategories)
-
-                val liveCategoryMap = liveGroups.withIndex().associate { (i, n) -> n to (i + 1).toLong() }
-                val vodCategoryMap  = vodGroups.withIndex().associate { (i, n) -> n to (i + 10_000).toLong() }
-
-                // ── Channels with stable hash IDs ───────────────────
-                val channels = liveEntries.map { entry ->
-                    val stableStreamId = stableId(provider.id, entry.tvgId, entry.url)
-                    Channel(
-                        id = 0,
-                        name = entry.name,
-                        logoUrl = entry.tvgLogo,
-                        groupTitle = entry.groupTitle,
-                        categoryId = liveCategoryMap[entry.groupTitle],
-                        categoryName = entry.groupTitle,
-                        epgChannelId = entry.tvgId ?: entry.tvgName,
-                        number = entry.tvgChno ?: 0,
-                        streamUrl = entry.url,
-                        catchUpSupported = entry.catchUp != null,
-                        catchUpDays = entry.catchUpDays ?: 0,
-                        catchUpSource = entry.catchUpSource,
-                        providerId = provider.id,
-                        isAdult = AdultContentClassifier.isAdultCategoryName(entry.groupTitle),
-                        streamId = stableStreamId
-                    ).toEntity()
-                }
-                Log.d(TAG, "Saving ${channels.size} channels")
-                channelDao.replaceAll(provider.id, channels)
-
-                // ── Movies with stable hash IDs ─────────────────────
-                progress(onProgress, "Saving Movies…")
-                val movies = vodEntries.map { entry ->
-                    val stableStreamId = stableId(provider.id, entry.tvgId, entry.url)
-                    Movie(
-                        id = 0,
-                        name = entry.name,
-                        posterUrl = entry.tvgLogo,
-                        categoryId = vodCategoryMap[entry.groupTitle],
-                        categoryName = entry.groupTitle,
-                        streamUrl = entry.url,
-                        providerId = provider.id,
-                        rating = entry.rating?.toFloatOrNull() ?: 0f,
-                        year = entry.year,
-                        genre = entry.genre,
-                        isAdult = AdultContentClassifier.isAdultCategoryName(entry.groupTitle),
-                        streamId = stableStreamId
-                    ).toEntity()
-                }
-                Log.d(TAG, "Saving ${movies.size} movies")
-                movieDao.replaceAll(provider.id, movies)
-                Log.d(TAG, "M3U refresh complete")
-
-                metadata = metadata.copy(
-                    lastLiveSync = now, lastMovieSync = now, lastSeriesSync = now, // treat as single payload
-                    liveCount = channels.size, movieCount = movies.size
-                )
-                syncMetadataRepository.updateMetadata(metadata)
+            val stats = withContext(Dispatchers.IO) { importM3uPlaylist(provider, onProgress) }
+            if (stats.liveCount == 0 && stats.movieCount == 0) {
+                throw IllegalStateException("Playlist is empty or contains no supported entries")
             }
-        } else {
-            Log.d(TAG, "Skipping M3U playlist sync (cache still valid)")
+            if (provider.epgUrl.isBlank() && !stats.header.tvgUrl.isNullOrBlank()) {
+                providerDao.updateEpgUrl(provider.id, stats.header.tvgUrl)
+            }
+            metadata = metadata.copy(
+                lastLiveSync = now,
+                lastMovieSync = now,
+                lastSeriesSync = now,
+                liveCount = stats.liveCount,
+                movieCount = stats.movieCount
+            )
+            syncMetadataRepository.updateMetadata(metadata)
         }
 
-        // Try EPG refresh if standard M3U provider linked an EPG URL or auto-discovered one
         val currentEpgUrl = providerDao.getById(provider.id)?.epgUrl ?: provider.epgUrl
-        if (!currentEpgUrl.isNullOrBlank()) {
-            if (force || !isCacheValid(metadata.lastEpgSync, TTL_6_HOURS, now)) {
-                try {
-                    progress(onProgress, "Downloading EPG…")
-                    retryTransient { epgRepository.refreshEpg(provider.id, currentEpgUrl) }
-                    metadata = metadata.copy(lastEpgSync = now)
-                    syncMetadataRepository.updateMetadata(metadata)
-                } catch (e: Exception) {
-                    Log.e(TAG, "EPG sync failed (non-fatal): ${e.message}")
-                    warnings.add("EPG sync failed")
-                }
-            } else {
-                Log.d(TAG, "Skipping EPG sync (cache still valid)")
+        if (!currentEpgUrl.isNullOrBlank() && (force || !isCacheValid(metadata.lastEpgSync, TTL_6_HOURS, now))) {
+            try {
+                progress(onProgress, "Downloading EPG...")
+                retryTransient { epgRepository.refreshEpg(provider.id, currentEpgUrl) }
+                metadata = metadata.copy(lastEpgSync = now)
+                syncMetadataRepository.updateMetadata(metadata)
+            } catch (e: Exception) {
+                Log.e(TAG, "EPG sync failed (non-fatal): ${e.message}")
+                warnings.add("EPG sync failed")
             }
         }
 
@@ -427,15 +305,13 @@ class SyncManager @Inject constructor(
         provider: Provider,
         onProgress: ((String) -> Unit)?
     ) {
-        progress(onProgress, "Retrying EPG…")
+        progress(onProgress, "Retrying EPG...")
         val epgUrl = when (provider.type) {
             ProviderType.XTREAM_CODES -> {
                 val base = provider.serverUrl.trimEnd('/')
                 provider.epgUrl.ifBlank { "$base/xmltv.php?username=${provider.username}&password=${provider.password}" }
             }
-            ProviderType.M3U -> {
-                providerDao.getById(provider.id)?.epgUrl ?: provider.epgUrl
-            }
+            ProviderType.M3U -> providerDao.getById(provider.id)?.epgUrl ?: provider.epgUrl
         }
         if (epgUrl.isBlank()) {
             throw IllegalStateException("No EPG URL configured for this provider")
@@ -454,7 +330,7 @@ class SyncManager @Inject constructor(
         val now = System.currentTimeMillis()
         when (provider.type) {
             ProviderType.XTREAM_CODES -> {
-                progress(onProgress, "Retrying Movies…")
+                progress(onProgress, "Retrying Movies...")
                 val api = XtreamProvider(
                     providerId = provider.id,
                     api = xtreamApiService,
@@ -473,49 +349,16 @@ class SyncManager @Inject constructor(
                 syncMetadataRepository.updateMetadata(metadata)
             }
             ProviderType.M3U -> {
-                progress(onProgress, "Retrying Movies…")
-                withContext(Dispatchers.IO) {
-                    val parseResult = loadM3uParseResult(provider)
-                    val entries = parseResult.entries
-                    val vodEntries = entries.filter { isVodEntry(it) }
-                    if (vodEntries.isEmpty()) {
-                        throw IllegalStateException("Playlist contains no movie entries")
-                    }
-                    val vodGroups = vodEntries.map { it.groupTitle }.distinct()
-                    val vodCategories = vodGroups.mapIndexed { i, name ->
-                        CategoryEntity(
-                            categoryId = (i + 10_000).toLong(),
-                            name = name,
-                            parentId = 0,
-                            type = "MOVIE",
-                            providerId = provider.id,
-                            isAdult = AdultContentClassifier.isAdultCategoryName(name)
-                        )
-                    }
-                    categoryDao.replaceAll(provider.id, "MOVIE", vodCategories)
-                    val vodCategoryMap = vodGroups.withIndex().associate { (i, n) -> n to (i + 10_000).toLong() }
-                    val movies = vodEntries.map { entry ->
-                        val stableStreamId = stableId(provider.id, entry.tvgId, entry.url)
-                        Movie(
-                            id = 0,
-                            name = entry.name,
-                            posterUrl = entry.tvgLogo,
-                            categoryId = vodCategoryMap[entry.groupTitle],
-                            categoryName = entry.groupTitle,
-                            streamUrl = entry.url,
-                            providerId = provider.id,
-                            rating = entry.rating?.toFloatOrNull() ?: 0f,
-                            year = entry.year,
-                            genre = entry.genre,
-                            isAdult = AdultContentClassifier.isAdultCategoryName(entry.groupTitle),
-                            streamId = stableStreamId
-                        ).toEntity()
-                    }
-                    movieDao.replaceAll(provider.id, movies)
-                    val metadata = (syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id))
-                        .copy(lastMovieSync = now, movieCount = movies.size)
-                    syncMetadataRepository.updateMetadata(metadata)
+                progress(onProgress, "Retrying Movies...")
+                val stats = withContext(Dispatchers.IO) {
+                    importM3uPlaylist(provider, onProgress, includeLive = false, includeMovies = true)
                 }
+                if (stats.movieCount == 0) {
+                    throw IllegalStateException("Playlist contains no movie entries")
+                }
+                val metadata = (syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id))
+                    .copy(lastMovieSync = now, movieCount = stats.movieCount)
+                syncMetadataRepository.updateMetadata(metadata)
             }
         }
     }
@@ -527,7 +370,7 @@ class SyncManager @Inject constructor(
         if (provider.type != ProviderType.XTREAM_CODES) {
             throw IllegalStateException("Series retry is available only for Xtream providers")
         }
-        progress(onProgress, "Retrying Series…")
+        progress(onProgress, "Retrying Series...")
         val api = XtreamProvider(
             providerId = provider.id,
             api = xtreamApiService,
@@ -548,70 +391,232 @@ class SyncManager @Inject constructor(
         syncMetadataRepository.updateMetadata(metadata)
     }
 
-    private fun loadM3uParseResult(provider: Provider): M3uParser.ParseResult {
-        val urlStr = provider.m3uUrl.ifBlank { provider.serverUrl }
-        val inputStream = if (urlStr.startsWith("file://")) {
-            java.io.File(java.net.URI(urlStr)).inputStream()
-        } else {
-            val payload = okHttpClient.newCall(Request.Builder().url(urlStr).build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IllegalStateException("Failed to download M3U: HTTP ${response.code}")
-                }
-                response.body?.bytes() ?: throw IllegalStateException("Empty M3U response")
+    private suspend fun importM3uPlaylist(
+        provider: Provider,
+        onProgress: ((String) -> Unit)?,
+        includeLive: Boolean = true,
+        includeMovies: Boolean = true,
+        batchSize: Int = 1000
+    ): M3uImportStats {
+        progress(onProgress, "Downloading Playlist...")
+        val existingChannelIds = if (includeLive) channelDao.getIdMappings(provider.id).associate { it.remoteId to it.id } else emptyMap()
+        val existingMovieIds = if (includeMovies) movieDao.getIdMappings(provider.id).associate { it.remoteId to it.id } else emptyMap()
+        val liveCategories = CategoryAccumulator(provider.id, "LIVE", 1L)
+        val movieCategories = CategoryAccumulator(provider.id, "MOVIE", 10_000L)
+        val channelBatch = ArrayList<ChannelEntity>(batchSize)
+        val movieBatch = ArrayList<MovieEntity>(batchSize)
+        var header = M3uParser.M3uHeader()
+        var liveCount = 0
+        var movieCount = 0
+        var parsedCount = 0
+        var nextMilestone = PROGRESS_INTERVAL
+
+        transactionRunner.inTransaction {
+            if (includeLive) {
+                channelDao.deleteByProvider(provider.id)
+                categoryDao.deleteByProviderAndType(provider.id, "LIVE")
             }
-            payload.inputStream()
+            if (includeMovies) {
+                movieDao.deleteByProvider(provider.id)
+                categoryDao.deleteByProviderAndType(provider.id, "MOVIE")
+            }
+
+            openPlaylistStream(provider) { streamed ->
+                progress(onProgress, "Parsing Playlist...")
+                maybeDecompressPlaylist(streamed).use { input ->
+                    m3uParser.parseStreaming(
+                        inputStream = input,
+                        onHeader = { parsedHeader ->
+                            header = parsedHeader
+                        }
+                    ) { entry ->
+                        parsedCount++
+                        if (parsedCount >= nextMilestone) {
+                            progress(onProgress, "Imported $parsedCount playlist entries...")
+                            nextMilestone += PROGRESS_INTERVAL
+                        }
+
+                        if (isVodEntry(entry)) {
+                            if (!includeMovies) {
+                                return@parseStreaming
+                            }
+                            val groupTitle = entry.groupTitle.ifBlank { "Uncategorized" }
+                            val stableStreamId = stableId(provider.id, entry.tvgId, entry.url)
+                            movieCategories.idFor(groupTitle)
+                            movieBatch.add(
+                                Movie(
+                                    id = existingMovieIds[stableStreamId] ?: 0L,
+                                    name = entry.name,
+                                    posterUrl = entry.tvgLogo,
+                                    categoryId = movieCategories.idFor(groupTitle),
+                                    categoryName = groupTitle,
+                                    streamUrl = entry.url,
+                                    providerId = provider.id,
+                                    rating = entry.rating?.toFloatOrNull() ?: 0f,
+                                    year = entry.year,
+                                    genre = entry.genre,
+                                    isAdult = AdultContentClassifier.isAdultCategoryName(groupTitle),
+                                    streamId = stableStreamId
+                                ).toEntity()
+                            )
+                            movieCount++
+                            if (movieBatch.size >= batchSize) {
+                                flushMovieBatch(movieBatch)
+                            }
+                        } else {
+                            if (!includeLive) {
+                                return@parseStreaming
+                            }
+                            val groupTitle = entry.groupTitle.ifBlank { "Uncategorized" }
+                            val stableStreamId = stableId(provider.id, entry.tvgId, entry.url)
+                            liveCategories.idFor(groupTitle)
+                            channelBatch.add(
+                                Channel(
+                                    id = existingChannelIds[stableStreamId] ?: 0L,
+                                    name = entry.name,
+                                    logoUrl = entry.tvgLogo,
+                                    groupTitle = groupTitle,
+                                    categoryId = liveCategories.idFor(groupTitle),
+                                    categoryName = groupTitle,
+                                    epgChannelId = entry.tvgId ?: entry.tvgName,
+                                    number = entry.tvgChno ?: 0,
+                                    streamUrl = entry.url,
+                                    catchUpSupported = entry.catchUp != null,
+                                    catchUpDays = entry.catchUpDays ?: 0,
+                                    catchUpSource = entry.catchUpSource,
+                                    providerId = provider.id,
+                                    isAdult = AdultContentClassifier.isAdultCategoryName(groupTitle),
+                                    streamId = stableStreamId
+                                ).toEntity()
+                            )
+                            liveCount++
+                            if (channelBatch.size >= batchSize) {
+                                flushChannelBatch(channelBatch)
+                            }
+                        }
+                    }
+                }
+            }
+
+            flushChannelBatch(channelBatch)
+            flushMovieBatch(movieBatch)
+            if (includeLive) {
+                categoryDao.insertAll(liveCategories.entities())
+            }
+            if (includeMovies) {
+                categoryDao.insertAll(movieCategories.entities())
+                movieDao.restoreWatchProgress(provider.id)
+            }
         }
-        return inputStream.use { m3uParser.parse(it) }
+
+        return M3uImportStats(header = header, liveCount = liveCount, movieCount = movieCount)
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────
-
-    /**
-     * Generate a stable, collision-resistant ID for an M3U entry.
-     *
-     * Priority:
-     *  1. tvg-id  (explicit EPG key — most stable)
-     *  2. SHA-256(providerId + streamUrl)  (URL changes invalidate the record — acceptable)
-     *
-     * This replaces the previous `index.toLong() + offset` scheme which caused
-     * data corruption whenever the playlist order changed.
-     */
-    private fun stableId(providerId: Long, tvgId: String?, url: String): Long {
-        if (!tvgId.isNullOrBlank()) {
-            // Hash the tvgId to fit in a Long
-            return hashToLong("$providerId:tvg:$tvgId")
+    private suspend fun openPlaylistStream(
+        provider: Provider,
+        block: suspend (StreamedPlaylist) -> Unit
+    ) {
+        val urlStr = provider.m3uUrl.ifBlank { provider.serverUrl }
+        if (urlStr.startsWith("file:")) {
+            java.io.File(java.net.URI(urlStr)).inputStream().use { input ->
+                block(StreamedPlaylist(inputStream = input, sourceName = urlStr))
+            }
+            return
         }
-        return hashToLong("$providerId:url:$url")
+
+        retryTransient {
+            okHttpClient.newCall(Request.Builder().url(urlStr).build()).execute().use { response ->
+                ensureSuccessfulPlaylistResponse(response)
+                val body = response.body ?: throw IllegalStateException("Empty M3U response")
+                body.byteStream().use { input ->
+                    block(
+                        StreamedPlaylist(
+                            inputStream = input,
+                            contentEncoding = response.header("Content-Encoding"),
+                            sourceName = urlStr
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun ensureSuccessfulPlaylistResponse(response: Response) {
+        if (response.isSuccessful) {
+            return
+        }
+        if (response.code in 500..599 || response.code == 429) {
+            throw IOException("Transient HTTP ${response.code}")
+        }
+        throw IllegalStateException("Failed to download M3U: HTTP ${response.code}")
+    }
+
+    private fun maybeDecompressPlaylist(streamed: StreamedPlaylist): InputStream {
+        val buffered = if (streamed.inputStream is BufferedInputStream) {
+            streamed.inputStream
+        } else {
+            BufferedInputStream(streamed.inputStream, 64 * 1024)
+        }
+        buffered.mark(2)
+        val first = buffered.read()
+        val second = buffered.read()
+        buffered.reset()
+        val gzipMagic = first == 0x1f && second == 0x8b
+        val encodedGzip = streamed.contentEncoding?.contains("gzip", ignoreCase = true) == true
+        val namedGzip = streamed.sourceName?.lowercase()?.endsWith(".gz") == true
+        return if (gzipMagic || encodedGzip || namedGzip) {
+            GZIPInputStream(buffered, 64 * 1024)
+        } else {
+            buffered
+        }
+    }
+
+    private suspend fun flushChannelBatch(batch: MutableList<ChannelEntity>) {
+        if (batch.isEmpty()) {
+            return
+        }
+        channelDao.insertAll(batch.distinctBy { it.streamId })
+        batch.clear()
+    }
+
+    private suspend fun flushMovieBatch(batch: MutableList<MovieEntity>) {
+        if (batch.isEmpty()) {
+            return
+        }
+        movieDao.insertAll(batch.distinctBy { it.streamId })
+        batch.clear()
+    }
+
+    private fun stableId(providerId: Long, tvgId: String?, url: String): Long {
+        return if (!tvgId.isNullOrBlank()) {
+            hashToLong("$providerId:tvg:$tvgId")
+        } else {
+            hashToLong("$providerId:url:$url")
+        }
     }
 
     private fun hashToLong(input: String): Long {
         val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
-        // Take first 8 bytes and fold into a Long (masks sign bit to keep positive)
         var result = 0L
         for (i in 0 until 8) {
             result = (result shl 8) or (digest[i].toLong() and 0xFF)
         }
-        return result and Long.MAX_VALUE // ensure positive
+        return result and Long.MAX_VALUE
     }
 
-    /**
-     * Heuristic to distinguish VOD (movie) entries from live streams in M3U playlists.
-     * Consolidated here as the single source of truth (previously duplicated).
-     */
     internal fun isVodEntry(entry: M3uParser.M3uEntry): Boolean {
         val url = entry.url.lowercase()
         val group = entry.groupTitle.lowercase()
         return url.endsWith(".mp4") ||
-                url.endsWith(".mkv") ||
-                url.endsWith(".avi") ||
-                url.contains("/movie/") ||
-                group.contains("movie") ||
-                group.contains("vod") ||
-                group.contains("film")
+            url.endsWith(".mkv") ||
+            url.endsWith(".avi") ||
+            url.contains("/movie/") ||
+            group.contains("movie") ||
+            group.contains("vod") ||
+            group.contains("film")
     }
 
     private fun isCacheValid(lastSync: Long, ttlMillis: Long, now: Long = System.currentTimeMillis()): Boolean {
-        // If lastSync is 0, cache is invalid. If now - lastSync < ttl, cache is valid.
         return lastSync > 0 && (now - lastSync) < ttlMillis
     }
 
@@ -672,9 +677,9 @@ class SyncManager @Inject constructor(
     companion object {
         const val TTL_24_HOURS = 24L * 60 * 60 * 1000L
         const val TTL_6_HOURS = 6L * 60 * 60 * 1000L
+        private const val PROGRESS_INTERVAL = 5_000
     }
 
-    // Extension to convert Result<T> to T-or-throw for mandatory resources
     private fun <T> com.streamvault.domain.model.Result<T>.getOrThrow(resourceName: String): T {
         return when (this) {
             is com.streamvault.domain.model.Result.Success -> data

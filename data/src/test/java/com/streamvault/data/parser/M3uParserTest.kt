@@ -3,6 +3,8 @@ package com.streamvault.data.parser
 import com.google.common.truth.Truth.assertThat
 import org.junit.Before
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.util.zip.GZIPOutputStream
 
 /**
  * Unit tests for [M3uParser].
@@ -135,6 +137,57 @@ class M3uParserTest {
             assertThat(catchUp).isEqualTo("xc")
             assertThat(catchUpSource).isEqualTo("http://catchup.example.com/ch1/{utc}-{utcend}.ts")
         }
+    }
+
+    @Test
+    fun `parse_unknownAttributes_preservedInExtraAttributes`() {
+        val m3u = """
+            #EXTM3U
+            #EXTINF:-1 group-title="Live" tvg-language="en" custom-attr="custom" another="x",Live Channel
+            http://stream.example.com/ch1.ts
+        """.trimIndent()
+
+        val entry = parseEntries(m3u).single()
+
+        assertThat(entry.tvgLanguage).isEqualTo("en")
+        assertThat(entry.extraAttributes).containsExactly(
+            "custom-attr", "custom",
+            "another", "x"
+        )
+    }
+
+    @Test
+    fun `parse_gzipPlaylist_returnsEntries`() {
+        val m3u = """
+            #EXTM3U
+            #EXTINF:-1 group-title="Live",Compressed
+            http://stream.example.com/compressed.ts
+        """.trimIndent()
+
+        val output = ByteArrayOutputStream()
+        GZIPOutputStream(output).bufferedWriter(Charsets.UTF_8).use { writer ->
+            writer.write(m3u)
+        }
+
+        val entries = parseEntries(String(java.util.zip.GZIPInputStream(output.toByteArray().inputStream()).readBytes(), Charsets.UTF_8))
+        assertThat(entries).hasSize(1)
+        assertThat(entries.single().name).isEqualTo("Compressed")
+    }
+
+    @Test
+    fun `parse_largeSyntheticPlaylist_returnsAllEntries`() {
+        val count = 100_000
+        val builder = StringBuilder("#EXTM3U\n")
+        repeat(count) { index ->
+            builder.append("#EXTINF:-1 group-title=\"Group ${index % 10}\",Channel ${index + 1}\n")
+            builder.append("http://stream.example.com/ch${index + 1}.ts\n")
+        }
+
+        val entries = parseEntries(builder.toString())
+
+        assertThat(entries).hasSize(count)
+        assertThat(entries.first().name).isEqualTo("Channel 1")
+        assertThat(entries.last().name).isEqualTo("Channel 100000")
     }
 
     @Test
