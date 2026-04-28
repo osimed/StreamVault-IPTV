@@ -18,14 +18,6 @@ dependencies {
     kover(project(":player"))
 }
 
-android {
-    defaultConfig {
-        minSdk = 23        // was probably 26+ — change to 23
-        targetSdk = 35     // keep this high
-        compileSdk = 35
-    }
-}
-
 kover {
     currentProject {
         createVariant("ci") {}
