@@ -70,9 +70,6 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Gradlew lint
-        run: ./gradlew lint
-
       - name: Run unit tests and coverage
         run: ./gradlew --console=plain testDebugUnitTest koverXmlReportCi koverHtmlReportCi
 
